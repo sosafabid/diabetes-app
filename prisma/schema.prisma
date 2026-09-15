@@ -1,0 +1,528 @@
+// ============================================================================
+// MODELO DE DATOS — App de gestión de diabetes (MVP)
+// ============================================================================
+// Principios de diseño aplicados aquí:
+// 1. Nada se sobrescribe silenciosamente: los parámetros clínicos tienen
+//    historial versionado (RegimenVersion).
+// 2. Toda lectura de glucosa conserva su fuente (sangre vs CGM) — nunca se
+//    guarda un número "desnudo".
+// 3. Todo cálculo de dosis queda auditado de forma inmutable (DoseCalculation).
+// 4. provenance/source aparecen en los eventos clínicamente relevantes.
+//
+// BASE DE DATOS: PostgreSQL (Neon).
+// A diferencia de SQLite, Postgres sí soporta `enum` y `Json` nativos de
+// Prisma, así que estos campos están tipados de forma estricta directamente
+// en el schema (antes, en la versión SQLite del MVP, estaban como String).
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Neon: usa la connection string "pooled" (con "-pooler" en el host) aquí.
+  url       = env("DATABASE_URL")
+  // Neon: usa la connection string directa (sin pooler) para migraciones.
+  // Ver notas de configuración en el README.
+  directUrl = env("DIRECT_URL")
+}
+
+// ----------------------------------------------------------------------------
+// USUARIO Y PERFIL
+// ----------------------------------------------------------------------------
+
+model User {
+  id                String   @id @default(uuid())
+  email             String   @unique
+  passwordHash      String
+  name              String
+  birthDate         DateTime?
+  glucoseUnit       GlucoseUnit @default(MGDL)
+  diabetesType      DiabetesType?
+  timezone          String   @default("America/Costa_Rica")
+  notificationPrefs Json?    // preferencias de notificación
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  insulinRegimens   InsulinRegimen[]
+  glucoseReadings   GlucoseReading[]
+  meals             Meal[]
+  habitualMeals     HabitualMeal[]
+  insulinEvents     InsulinEvent[]
+  exerciseEvents    ExerciseEvent[]
+  contextEvents     ContextEvent[]
+  alerts            Alert[]
+  followUps         FollowUp[]
+  doseCalculations  DoseCalculation[]
+  reports           Report[]
+  auditLogs         AuditLog[]
+}
+
+enum GlucoseUnit {
+  MGDL
+  MMOLL
+}
+
+enum DiabetesType {
+  TYPE_1
+  TYPE_2
+  GESTATIONAL
+  OTHER
+  UNSPECIFIED
+}
+
+// ----------------------------------------------------------------------------
+// TRATAMIENTO / INSULINAS — CON HISTORIAL VERSIONADO
+// ----------------------------------------------------------------------------
+
+// InsulinRegimen = "una insulina en el plan del paciente" (p. ej. "Glargina").
+// No guarda los parámetros directamente: siempre apunta a la versión vigente,
+// y conserva TODAS las versiones anteriores en RegimenVersion.
+model InsulinRegimen {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+
+  insulinName String              // p.ej. "Glargina", "Lispro"
+  insulinType InsulinType
+  usage       InsulinUsage
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+
+  versions    RegimenVersion[]
+  insulinEvents InsulinEvent[]
+}
+
+enum InsulinType {
+  RAPID
+  ULTRA_RAPID
+  SHORT
+  INTERMEDIATE
+  LONG
+  OTHER
+}
+
+enum InsulinUsage {
+  MEALS
+  CORRECTION
+  BASAL
+  OTHER
+}
+
+// Cada cambio de parámetros crea una nueva versión. Nunca se edita una
+// versión existente — así se puede reconstruir qué estaba vigente en
+// cualquier fecha/hora histórica (requisito de auditoría, sección 7).
+model RegimenVersion {
+  id                     String   @id @default(uuid())
+  insulinRegimenId       String
+  insulinRegimen         InsulinRegimen @relation(fields: [insulinRegimenId], references: [id])
+
+  // Parámetros generales de dosificación prescrita (todos opcionales:
+  // dependen de si la insulina es basal, de comida, o de corrección).
+  prescribedDose         Float?   // dosis fija (p.ej. basal)
+  doseUnit               String   @default("U")
+  schedule               String?  // p.ej. "21:00" o "con cada comida"
+  frequency              String?
+
+  // Parámetros de comida/corrección — SIEMPRE introducidos por el paciente
+  // según indicación de su profesional de salud. Nunca calculados/inventados
+  // por el sistema.
+  carbRatio              Float?   // relación insulina/carbohidratos (g por U)
+  correctionFactor       Float?   // cuánto baja 1 U la glucosa
+  targetGlucoseLow        Float?
+  targetGlucoseHigh       Float?
+
+  notes                  String?
+
+  effectiveFrom          DateTime @default(now())
+  effectiveTo             DateTime? // null = versión vigente
+
+  changedByUserId        String?  // quién hizo el cambio (paciente/cuidador)
+  changeReason            String?
+
+  createdAt               DateTime @default(now())
+
+  @@index([insulinRegimenId, effectiveFrom])
+}
+
+// ----------------------------------------------------------------------------
+// GLUCOSA
+// ----------------------------------------------------------------------------
+
+model GlucoseReading {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id])
+
+  timestamp         DateTime
+  glucoseValue      Float
+  unit              GlucoseUnit
+  measurementSource MeasurementSource   // BLOOD | CGM — obligatorio
+  cgmTrend          CgmTrend?           // solo aplica si source = CGM
+  context           GlucoseContext?
+  notes             String?
+
+  createdAt         DateTime @default(now())
+
+  @@index([userId, timestamp])
+}
+
+enum MeasurementSource {
+  BLOOD
+  CGM
+}
+
+enum CgmTrend {
+  STABLE
+  RISING
+  RISING_FAST
+  FALLING
+  FALLING_FAST
+}
+
+enum GlucoseContext {
+  BEFORE_MEAL
+  AFTER_MEAL
+  BEFORE_EXERCISE
+  AFTER_EXERCISE
+  BEFORE_SLEEP
+  SUSPECTED_HYPO
+  OTHER
+}
+
+// ----------------------------------------------------------------------------
+// ALIMENTOS Y COMIDAS
+// ----------------------------------------------------------------------------
+
+// Catálogo de alimentos — diseñado para soportar alimentos regionales
+// latinoamericanos, no solo bases de datos genéricas/estadounidenses.
+model FoodItem {
+  id           String   @id @default(uuid())
+  name         String
+  category     String?
+  portionSize  Float
+  portionUnit  String   // "taza", "unidad", "g", "ml", etc.
+  carbsG       Float
+  proteinG     Float?
+  fatG         Float?
+  calories     Float?
+  source       String?  // fuente de la info nutricional
+  region       String?  // país/región (p.ej. "CR", "LATAM")
+
+  createdAt    DateTime @default(now())
+
+  mealItems    MealItem[]
+
+  @@index([name])
+  @@index([region])
+}
+
+model Meal {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+
+  timestamp       DateTime
+  mealType        MealType
+
+  // Método A: carbohidratos introducidos directamente
+  carbsGDirect    Float?
+
+  // Método C: estimación por foto — SIEMPRE debe confirmarse/editarse
+  photoUrl              String?
+  aiEstimatedCarbsG     Float?
+  aiEstimationConfirmed Boolean @default(false)
+
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  items           MealItem[]   // Método B: construida a partir de alimentos
+  insulinEvents   InsulinEvent[]
+
+  @@index([userId, timestamp])
+}
+
+enum MealType {
+  BREAKFAST
+  LUNCH
+  DINNER
+  SNACK
+  OTHER
+}
+
+// Alimento individual dentro de una comida (Método B — construir comida)
+model MealItem {
+  id         String   @id @default(uuid())
+  mealId     String
+  meal       Meal     @relation(fields: [mealId], references: [id])
+  foodItemId String
+  foodItem   FoodItem @relation(fields: [foodItemId], references: [id])
+  quantity   Float    // en múltiplos de portionUnit del FoodItem
+}
+
+// "Mis comidas habituales" — plantillas reutilizables (sección 13)
+model HabitualMeal {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+
+  name        String   // p.ej. "Mi desayuno habitual"
+  usualTime   String?
+  carbsGEstimate Float?
+
+  createdAt   DateTime @default(now())
+
+  items       HabitualMealItem[]
+}
+
+model HabitualMealItem {
+  id             String   @id @default(uuid())
+  habitualMealId String
+  habitualMeal   HabitualMeal @relation(fields: [habitualMealId], references: [id])
+  foodItemId     String
+  quantity       Float
+}
+
+// ----------------------------------------------------------------------------
+// INSULINA — EVENTOS DE APLICACIÓN
+// ----------------------------------------------------------------------------
+
+model InsulinEvent {
+  id               String   @id @default(uuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id])
+
+  insulinRegimenId String
+  insulinRegimen   InsulinRegimen @relation(fields: [insulinRegimenId], references: [id])
+
+  timestamp        DateTime
+  dose             Float
+  doseUnit         String   @default("U")
+  purpose          InsulinPurpose
+
+  mealId           String?
+  meal             Meal?    @relation(fields: [mealId], references: [id])
+
+  // Vínculo trazable a un cálculo de dosis, si esta aplicación vino de uno
+  doseCalculationId String?
+  doseCalculation    DoseCalculation? @relation(fields: [doseCalculationId], references: [id])
+
+  notes            String?
+  createdAt        DateTime @default(now())
+
+  @@index([userId, timestamp])
+}
+
+enum InsulinPurpose {
+  MEAL
+  CORRECTION
+  BASAL
+  OTHER
+}
+
+// ----------------------------------------------------------------------------
+// EJERCICIO Y CONTEXTO (ESTRÉS / SUEÑO / ENFERMEDAD)
+// ----------------------------------------------------------------------------
+
+model ExerciseEvent {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+
+  timestamp DateTime
+  type      ExerciseType
+  duration  Int      // minutos
+  intensity Intensity
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, timestamp])
+}
+
+enum ExerciseType {
+  WALKING
+  RUNNING
+  CYCLING
+  WEIGHTS
+  HIIT
+  SWIMMING
+  SPORT
+  OTHER
+}
+
+enum Intensity {
+  LIGHT
+  MODERATE
+  INTENSE
+}
+
+// Estrés, sueño, enfermedad, situaciones inusuales — sección 17.
+// IMPORTANTE: se guarda como "estrés reportado", nunca como medición clínica.
+model ContextEvent {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id])
+
+  timestamp         DateTime
+  reportedStress    StressLevel?
+  sleepHours        Float?
+  sleepQuality      SleepQuality?
+  illnessReported   Boolean  @default(false)
+  unusualSituation  UnusualSituation?
+  notes             String?
+
+  createdAt         DateTime @default(now())
+
+  @@index([userId, timestamp])
+}
+
+enum StressLevel {
+  LOW
+  MODERATE
+  HIGH
+}
+
+enum SleepQuality {
+  POOR
+  REGULAR
+  GOOD
+}
+
+enum UnusualSituation {
+  WORK
+  EMOTIONAL_STRESS
+  TRAVEL
+  OTHER
+}
+
+// ----------------------------------------------------------------------------
+// CÁLCULO DE DOSIS — AUDITORÍA INMUTABLE (sección 34)
+// ----------------------------------------------------------------------------
+
+model DoseCalculation {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id])
+
+  timestamp         DateTime @default(now())
+  algorithmVersion  String
+
+  inputValues       Json     // snapshot completo de inputs
+  inputSources      Json     // de dónde vino cada input
+  parametersUsed    Json     // qué RegimenVersion/parámetros se usaron
+  rulesTriggered    Json     // reglas del SafetyEngine/DoseCalculationEngine aplicadas
+  output            Json     // resultado del cálculo (o null si bloqueado)
+  warnings          Json?
+  safetyStatus      SafetyStatus
+
+  createdAt         DateTime @default(now())
+
+  insulinEvents     InsulinEvent[]
+
+  @@index([userId, timestamp])
+}
+
+enum SafetyStatus {
+  OK
+  WARNING
+  BLOCKED
+}
+
+// ----------------------------------------------------------------------------
+// ALERTAS Y SEGUIMIENTO
+// ----------------------------------------------------------------------------
+
+model Alert {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+
+  type        AlertType
+  severity    AlertSeverity
+  message     String
+  relatedEntityType String?  // p.ej. "GlucoseReading", "DoseCalculation"
+  relatedEntityId   String?
+  resolvedAt  DateTime?
+
+  createdAt   DateTime @default(now())
+
+  followUps   FollowUp[]
+
+  @@index([userId, createdAt])
+}
+
+enum AlertType {
+  LOW_GLUCOSE
+  HIGH_GLUCOSE
+  CALCULATION_BLOCKED
+  MISSING_DATA
+  CGM_ISSUE
+  RECENT_INTENSE_EXERCISE
+  ILLNESS_REPORTED
+  OTHER
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+model FollowUp {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  alertId     String?
+  alert       Alert?   @relation(fields: [alertId], references: [id])
+
+  dueAt       DateTime
+  completedAt DateTime?
+  description String
+
+  createdAt   DateTime @default(now())
+}
+
+// ----------------------------------------------------------------------------
+// REPORTES
+// ----------------------------------------------------------------------------
+
+model Report {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+
+  periodStart DateTime
+  periodEnd   DateTime
+  format      ReportFormat
+  summaryJson Json     // contenido estructurado del informe (sección 24)
+  filePath    String?  // ubicación del PDF/CSV/JSON generado
+
+  createdAt   DateTime @default(now())
+}
+
+enum ReportFormat {
+  PDF
+  CSV
+  JSON
+}
+
+// ----------------------------------------------------------------------------
+// AUDITORÍA GENERAL (acceso, cambios de cuenta, exportaciones, etc.)
+// ----------------------------------------------------------------------------
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+
+  action     String   // p.ej. "LOGIN", "EXPORT_DATA", "REGIMEN_VERSION_CREATED"
+  entityType String?
+  entityId   String?
+  metadata   Json?
+
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
