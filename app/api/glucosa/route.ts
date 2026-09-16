@@ -97,22 +97,42 @@ export async function POST(request: Request) {
     },
   });
 
-  // Alerta automática si la glucosa está baja — no calcula ni sugiere dosis,
-  // solo registra la alerta para que el paciente siga su plan de hipoglucemia.
-  const mgdl =
-    unit === "MMOLL" ? glucoseValue * 18.0182 : glucoseValue;
-  if (mgdl < 70) {
-    await prisma.alert.create({
+  // Detección de glucosa baja — usa el umbral del plan personal del
+  // paciente si existe; si todavía no configuró uno, usa 70 mg/dL como
+  // umbral conservador SOLO para detectar el evento (nunca para calcular
+  // carbohidratos — eso siempre viene del plan, nunca de una fórmula).
+  const mgdl = unit === "MMOLL" ? glucoseValue * 18.0182 : glucoseValue;
+
+  const activePlan = await prisma.hypoglycemiaPlan.findFirst({
+    where: { userId: session.userId, effectiveTo: null },
+    orderBy: { effectiveFrom: "desc" },
+  });
+  const threshold = activePlan?.lowThreshold ?? 70;
+
+  if (mgdl < threshold) {
+    const alert = await prisma.alert.create({
       data: {
         userId: session.userId,
         type: "LOW_GLUCOSE",
         severity: mgdl < 54 ? "CRITICAL" : "WARNING",
-        message:
-          "Se registró una glucosa baja. Sigue tu plan de tratamiento de hipoglucemia indicado por tu profesional de salud.",
+        message: activePlan
+          ? "Se registró una glucosa baja. Sigue tu plan personal de hipoglucemia."
+          : "Se registró una glucosa baja. Todavía no has configurado tu plan personal de hipoglucemia — hazlo en Mi tratamiento.",
         relatedEntityType: "GlucoseReading",
         relatedEntityId: reading.id,
       },
     });
+
+    await prisma.hypoglycemiaEvent.create({
+      data: {
+        userId: session.userId,
+        glucoseReadingId: reading.id,
+        hypoglycemiaPlanId: activePlan?.id,
+        status: "PENDING",
+      },
+    });
+
+    return NextResponse.json({ reading, alertId: alert.id, lowGlucoseDetected: true });
   }
 
   return NextResponse.json({ reading });

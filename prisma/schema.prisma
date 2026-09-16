@@ -57,6 +57,8 @@ model User {
   doseCalculations  DoseCalculation[]
   reports           Report[]
   auditLogs         AuditLog[]
+  hypoglycemiaPlans  HypoglycemiaPlan[]
+  hypoglycemiaEvents HypoglycemiaEvent[]
 }
 
 enum GlucoseUnit {
@@ -165,6 +167,9 @@ model GlucoseReading {
   notes             String?
 
   createdAt         DateTime @default(now())
+
+  triggeredHypoglycemiaEvent HypoglycemiaEvent? @relation("TriggeringReading")
+  resolvedHypoglycemiaEvent  HypoglycemiaEvent? @relation("ResolvedReading")
 
   @@index([userId, timestamp])
 }
@@ -482,6 +487,87 @@ model FollowUp {
   description String
 
   createdAt   DateTime @default(now())
+
+  hypoglycemiaEvent HypoglycemiaEvent?
+}
+
+// ----------------------------------------------------------------------------
+// PLAN PERSONAL DE HIPOGLUCEMIA
+// ----------------------------------------------------------------------------
+// Versionado igual que RegimenVersion (sección 7 del proyecto): nunca se
+// sobrescribe un plan anterior, se crea una versión nueva. Todos los valores
+// son configurados por el paciente según indicación de su profesional de
+// salud — la app nunca calcula ni asume un valor por defecto real (el 15 g /
+// 70 mg/dL que se muestra en la UI es solo una referencia inicial editable,
+// nunca un valor forzado).
+model HypoglycemiaPlan {
+  id                    String   @id @default(uuid())
+  userId                String
+  user                  User     @relation(fields: [userId], references: [id])
+
+  lowThreshold          Float    // mg/dL — bajo este valor se considera glucosa baja
+  fastCarbsG            Float    // gramos de carbohidratos de acción rápida a consumir
+  reassessMinutes       Int      // minutos recomendados para volver a medir
+  productName           String?  // p.ej. "Tabletas de glucosa"
+  carbsPerProductUnit   Float?   // g de carbohidratos por unidad del producto
+
+  glucagonAvailable     Boolean  @default(false)
+  glucagonInstructions  String?  // instrucciones configuradas por el paciente/profesional
+  emergencyInstructions String?  // texto libre para el escenario de hipoglucemia severa
+
+  effectiveFrom         DateTime @default(now())
+  effectiveTo           DateTime? // null = versión vigente
+  changedByUserId       String?
+  changeReason          String?
+
+  createdAt             DateTime @default(now())
+
+  hypoglycemiaEvents    HypoglycemiaEvent[]
+
+  @@index([userId, effectiveFrom])
+}
+
+// Una hipoglucemia detectada: vincula la lectura que la disparó, el plan
+// vigente en ese momento, el tratamiento aplicado, el seguimiento (FollowUp)
+// y la medición posterior — para poder reconstruir el flujo completo en
+// "Mi día" y, más adelante, en /resumen.
+model HypoglycemiaEvent {
+  id                   String   @id @default(uuid())
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id])
+
+  glucoseReadingId     String @unique
+  glucoseReading       GlucoseReading @relation("TriggeringReading", fields: [glucoseReadingId], references: [id])
+
+  hypoglycemiaPlanId   String?
+  hypoglycemiaPlan     HypoglycemiaPlan? @relation(fields: [hypoglycemiaPlanId], references: [id])
+
+  status               HypoglycemiaEventStatus @default(PENDING)
+
+  // Se completan cuando el paciente registra el tratamiento (flujo estándar)
+  treatedAt            DateTime?
+  carbsConsumedG       Float?
+  productUsed          String?
+
+  // Se completa si el paciente marca el escenario severo (no calcula nada)
+  severeMarkedAt        DateTime?
+
+  followUpId           String?  @unique
+  followUp             FollowUp? @relation(fields: [followUpId], references: [id])
+
+  resolvedGlucoseReadingId String? @unique
+  resolvedGlucoseReading   GlucoseReading? @relation("ResolvedReading", fields: [resolvedGlucoseReadingId], references: [id])
+
+  createdAt             DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+enum HypoglycemiaEventStatus {
+  PENDING   // detectada, esperando acción del paciente
+  TREATED   // paciente registró tratamiento estándar (carbohidratos)
+  SEVERE    // paciente marcó escenario severo (no puede tragar / inconsciente)
+  RESOLVED  // ya tiene una medición de seguimiento registrada
 }
 
 // ----------------------------------------------------------------------------

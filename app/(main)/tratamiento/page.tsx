@@ -1,6 +1,7 @@
 import { prisma } from "../../../src/lib/prisma";
 import { requireSession } from "../../../src/lib/auth-guard";
 import NuevaInsulinaForm from "./NuevaInsulinaForm";
+import PlanHipoglucemiaForm from "./PlanHipoglucemiaForm";
 
 const TIPO_LABELS: Record<string, string> = {
   RAPID: "Rápida",
@@ -21,11 +22,17 @@ const USO_LABELS: Record<string, string> = {
 export default async function TratamientoPage() {
   const session = await requireSession();
 
-  const regimens = await prisma.insulinRegimen.findMany({
-    where: { userId: session.userId, isActive: true },
-    include: { versions: { orderBy: { effectiveFrom: "desc" }, take: 1 } },
-    orderBy: { createdAt: "asc" },
-  });
+  const [regimens, hypoglycemiaPlan] = await Promise.all([
+    prisma.insulinRegimen.findMany({
+      where: { userId: session.userId, isActive: true },
+      include: { versions: { orderBy: { effectiveFrom: "desc" }, take: 1 } },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.hypoglycemiaPlan.findFirst({
+      where: { userId: session.userId, effectiveTo: null },
+      orderBy: { effectiveFrom: "desc" },
+    }),
+  ]);
 
   return (
     <div className="page">
@@ -78,6 +85,9 @@ export default async function TratamientoPage() {
       )}
 
       <NuevaInsulinaForm />
+
+      <h2>Plan de hipoglucemia</h2>
+      <PlanHipoglucemiaForm currentPlan={hypoglycemiaPlan} />
     </div>
   );
 }

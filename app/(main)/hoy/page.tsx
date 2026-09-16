@@ -1,30 +1,58 @@
 import Link from "next/link";
 import { prisma } from "../../../src/lib/prisma";
 import { requireSession } from "../../../src/lib/auth-guard";
+import AlertaHipoglucemia from "../glucosa/AlertaHipoglucemia";
 
 export default async function HoyPage() {
   const session = await requireSession();
 
-  const [lastGlucose, lastInsulin, activeAlerts] = await Promise.all([
-    prisma.glucoseReading.findFirst({
-      where: { userId: session.userId },
-      orderBy: { timestamp: "desc" },
-    }),
-    prisma.insulinEvent.findFirst({
-      where: { userId: session.userId },
-      orderBy: { timestamp: "desc" },
-      include: { insulinRegimen: true },
-    }),
-    prisma.alert.findMany({
-      where: { userId: session.userId, resolvedAt: null },
-      orderBy: { createdAt: "desc" },
-      take: 5,
-    }),
-  ]);
+  const [lastGlucose, lastInsulin, activeAlerts, pendingHypoEvents] =
+    await Promise.all([
+      prisma.glucoseReading.findFirst({
+        where: { userId: session.userId },
+        orderBy: { timestamp: "desc" },
+      }),
+      prisma.insulinEvent.findFirst({
+        where: { userId: session.userId },
+        orderBy: { timestamp: "desc" },
+        include: { insulinRegimen: true },
+      }),
+      prisma.alert.findMany({
+        where: { userId: session.userId, resolvedAt: null },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+      }),
+      prisma.hypoglycemiaEvent.findMany({
+        where: { userId: session.userId, status: "PENDING" },
+        include: { glucoseReading: true, hypoglycemiaPlan: true },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
 
   return (
     <div className="page">
       <h1>Hoy</h1>
+
+      {pendingHypoEvents.map((ev) => (
+        <AlertaHipoglucemia
+          key={ev.id}
+          event={{
+            id: ev.id,
+            glucoseReadingId: ev.glucoseReadingId,
+            glucoseValue: ev.glucoseReading.glucoseValue,
+            plan: ev.hypoglycemiaPlan
+              ? {
+                  fastCarbsG: ev.hypoglycemiaPlan.fastCarbsG,
+                  productName: ev.hypoglycemiaPlan.productName,
+                  reassessMinutes: ev.hypoglycemiaPlan.reassessMinutes,
+                  glucagonAvailable: ev.hypoglycemiaPlan.glucagonAvailable,
+                  glucagonInstructions: ev.hypoglycemiaPlan.glucagonInstructions,
+                  emergencyInstructions: ev.hypoglycemiaPlan.emergencyInstructions,
+                }
+              : null,
+          }}
+        />
+      ))}
 
       {activeAlerts.length > 0 && (
         <div className="alert-banner">

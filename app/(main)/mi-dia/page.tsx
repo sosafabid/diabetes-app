@@ -34,7 +34,7 @@ export default async function MiDiaPage() {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
 
-  const [glucose, meals, insulin, exercise, context] = await Promise.all([
+  const [glucose, meals, insulin, exercise, context, hypoEvents] = await Promise.all([
     prisma.glucoseReading.findMany({
       where: { userId: session.userId, timestamp: { gte: startOfDay } },
     }),
@@ -50,6 +50,9 @@ export default async function MiDiaPage() {
     }),
     prisma.contextEvent.findMany({
       where: { userId: session.userId, timestamp: { gte: startOfDay } },
+    }),
+    prisma.hypoglycemiaEvent.findMany({
+      where: { userId: session.userId, createdAt: { gte: startOfDay } },
     }),
   ]);
 
@@ -81,6 +84,20 @@ export default async function MiDiaPage() {
       icon: "🏃",
       label: EXERCISE_LABELS[e.type] ?? "Actividad",
       detail: `${e.duration} min`,
+    })),
+    ...hypoEvents.map((h) => ({
+      id: `h-${h.id}`,
+      timestamp: h.createdAt,
+      icon: "🚨",
+      label: "Hipoglucemia",
+      detail:
+        h.status === "PENDING"
+          ? "Pendiente de tratamiento"
+          : h.status === "TREATED"
+            ? `Tratada con ${h.carbsConsumedG} g de carbohidratos`
+            : h.status === "SEVERE"
+              ? "Marcada como severa"
+              : "Resuelta",
     })),
     ...context.map((c) => ({
       id: `c-${c.id}`,
