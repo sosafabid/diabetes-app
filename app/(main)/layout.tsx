@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { href: "/insulina", label: "💉 Insulina" },
   { href: "/actividad", label: "🏃 Actividad" },
   { href: "/mi-dia", label: "📊 Mi día" },
+  { href: "/resumen", label: "📈 Resumen" },
   { href: "/tratamiento", label: "⚙️ Mi tratamiento" },
 ];
 
