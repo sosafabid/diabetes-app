@@ -1,3 +1,5 @@
+import "./globals.css";
+
 export const metadata = {
   title: "Acompañante de gestión de diabetes",
   description: "MVP — acompañante personal de gestión de diabetes",

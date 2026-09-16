@@ -1,170 +1,191 @@
-# Acompañante de gestión de diabetes (MVP) — Fase 1: Arquitectura y modelo de datos
+# Acompañante de gestión de diabetes (MVP)
 
-> Nombre provisional. Esta entrega cubre lo pedido como primer paso: **arquitectura +
-> modelo de datos**, con el `SafetyEngine` y el `DoseCalculationEngine` ya
-> implementados y probados (son el núcleo de riesgo clínico), y el resto de
-> motores como interfaces documentadas listas para implementarse.
+> Nombre provisional. Acompañante personal para la gestión diaria de la
+> diabetes: alimentación → insulina → glucosa → ejercicio → estrés/recuperación
+> → seguimiento → patrones → comunicación con profesionales de salud.
 
-## Principio rector
+## Descripción
 
-> El paciente aporta información → el sistema organiza y analiza → el sistema
-> explica → el sistema alerta cuando corresponde → el profesional de salud
-> toma las decisiones clínicas.
+Esta aplicación ayuda a personas que usan insulina a registrar y comprender
+su día a día. **No diagnostica, no decide dosis nuevas por sí sola, no
+modifica la prescripción, y no inventa ningún parámetro clínico** (relación
+insulina/carbohidratos, factor de corrección, objetivo de glucosa, etc.).
+Todo eso lo introduce el paciente según indicación de su profesional de
+salud. Funciona perfectamente sin CGM — el CGM es una fuente opcional más.
 
-La app **no diagnostica, no decide dosis nuevas por sí sola, no modifica la
-prescripción, y no inventa ningún parámetro clínico** (relación
-insulina/carbohidratos, factor de corrección, objetivo de glucosa, duración de
-acción, etc.). Todo eso lo introduce el paciente según indicación de su
-profesional de salud.
+## Funcionalidades
 
-## Estructura del repositorio
+### ✅ Implementadas y conectadas a base de datos real
+
+- Registro de cuenta, inicio de sesión, cierre de sesión (cookies de sesión
+  firmadas con JWT, contraseñas con bcrypt).
+- **Mi tratamiento**: registrar insulinas (basal / comidas / corrección) con
+  sus parámetros clínicos. Versionado: nunca se sobrescribe un parámetro
+  anterior.
+- **Glucosa**: registro con fuente obligatoria (🩸 sangre / 📡 CGM), tendencia
+  de CGM, contexto. Genera una alerta automática si la glucosa está baja.
+- **Comidas**: registro por carbohidratos directos (gramos).
+- **Insulina**: registro manual de dosis aplicadas, por insulina y propósito.
+- **Actividad física**: tipo, duración, intensidad.
+- **Mi día**: timeline cronológico armado en tiempo real a partir de la base
+  de datos (no hardcodeado).
+- **Hoy**: dashboard con última glucosa, última insulina, alertas activas y
+  accesos rápidos.
+- `SafetyEngine` y `DoseCalculationEngine`: motor determinista y auditable,
+  con 12 tests automatizados (ver `src/domain/SafetyEngine.test.ts`) —
+  **implementado pero todavía no conectado a ninguna pantalla** (ver
+  pendientes abajo).
+
+### 🚧 Explícitamente NO implementado en esta fase (no simulado, no oculto)
+
+- Construir comida a partir de alimentos (Método B) y análisis de foto
+  (Método C) — la UI de Comidas muestra "función próximamente disponible",
+  no un botón que finja funcionar.
+- Cálculo asistido de dosis en la pantalla de Insulina (el `DoseCalculationEngine`
+  existe y está probado, pero el formulario de registro de insulina hoy es
+  100% manual — no llama al motor todavía).
+- `InsulinActivityEngine` (insulina activa / IOB) — sigue siendo un stub que
+  lanza error a propósito, como estaba documentado desde el inicio: requiere
+  validación clínica de parámetros farmacocinéticos.
+- `PatternEngine` — tiene lógica mínima implementada (detección de comidas
+  repetidas con glucosa alta) pero **no tiene pantalla en la UI** todavía.
+- Sección "Mis patrones" — no existe como pantalla.
+- Informe para el equipo de salud — no existe.
+- Exportación PDF / CSV / JSON — no existe.
+- Recordatorios/notificaciones reales (el `NotificationEngine` existe como
+  lógica pero no hay sistema de notificaciones push/programadas conectado).
+- Estrés y sueño — el modelo de datos (`ContextEvent`) existe y ya aparece en
+  el timeline de "Mi día" si hay datos, pero no hay formulario de registro en
+  la UI todavía.
+- Datos de demostración marcados como tal.
+- Internacionalización (i18n) — la app está en español fijo, sin arquitectura
+  de idiomas todavía.
+
+## Arquitectura
 
 ```
-diabetes-app/
-├── prisma/
-│   └── schema.prisma        # Modelo de datos completo (ver sección abajo)
-├── src/
-│   └── domain/               # Capa de dominio — lógica clínica, sin UI ni DB
-│       ├── types.ts                   # Contratos compartidos
-│       ├── SafetyEngine.ts            # ✅ Implementado y probado
-│       ├── SafetyEngine.test.ts       # 12 tests, incluye casos límite
-│       ├── DoseCalculationEngine.ts   # ✅ Implementado y probado
-│       ├── MealEngine.ts              # ✅ Implementado (normaliza 3 métodos de registro)
-│       ├── InsulinActivityEngine.ts   # 🚧 Stub — TODO: validación clínica
-│       ├── PatternEngine.ts           # 🚧 Implementación mínima + TODOs
-│       └── NotificationEngine.ts      # ✅ Implementado (recordatorios configurables)
-├── package.json
-└── tsconfig.json
-```
-
-Capas (sección 27 del spec):
-
-```
-UI  →  DOMAIN LAYER (motores)  →  DATA LAYER (Prisma / base de datos)
-```
-
-La UI nunca debe contener lógica clínica. Todo cálculo/decisión pasa por la
-capa de dominio, y la capa de dominio no sabe nada de React/HTTP/etc. — esto
-es lo que permite testear `SafetyEngine` y `DoseCalculationEngine` de forma
-aislada y, más adelante, someterlos a validación clínica/regulatoria formal
-sin tocar el resto del sistema.
-
-## Regla de oro entre los dos motores centrales
-
-```
-SafetyEngine.check(input)
+UI (Next.js App Router, Server + Client Components)
         │
-        ├── blocksCalculation = true  →  DoseCalculationEngine.calculate()
-        │                                devuelve totalDose = null.
-        │                                NUNCA se muestra una dosis.
+        ├── app/login, app/registro          → páginas públicas
+        ├── app/(main)/...                   → páginas protegidas por middleware.ts
+        └── app/api/...                      → route handlers (API)
         │
-        └── blocksCalculation = false →  se calcula la dosis normalmente,
-                                          con las advertencias (WARNING) que
-                                          correspondan.
+        ↓
+DOMAIN LAYER (src/domain/) — sin dependencias de UI ni de Prisma
+        │
+        ├── SafetyEngine            (implementado + probado)
+        ├── DoseCalculationEngine   (implementado + probado)
+        ├── MealEngine              (implementado)
+        ├── NotificationEngine      (implementado)
+        ├── PatternEngine           (mínimo + TODOs)
+        └── InsulinActivityEngine   (stub — requiere validación clínica)
+        │
+        ↓
+DATA LAYER
+        │
+        ├── prisma/schema.prisma    → modelo de datos completo (Postgres/Neon)
+        └── src/lib/prisma.ts       → cliente Prisma singleton
+        │
+AUTH LAYER
+        │
+        ├── src/lib/session.ts      → firmar/verificar JWT, cookie httpOnly
+        ├── src/lib/auth-guard.ts   → requireSession() para Server Components/API
+        └── middleware.ts           → protege todas las rutas salvo /login, /registro, /api/auth/*, /api/health
 ```
 
-`DoseCalculationEngine` llama internamente a `SafetyEngine` en cada
-`calculate()` — es imposible obtener una dosis sin pasar primero por las
-reglas de seguridad. Esto está cubierto por tests de integración en
-`SafetyEngine.test.ts`.
+La UI nunca contiene lógica clínica: todo cálculo pasa por la capa de
+dominio, que no sabe nada de Next.js/HTTP/Prisma — esto permite testear
+`SafetyEngine`/`DoseCalculationEngine` de forma aislada y, más adelante,
+someterlos a validación clínica sin tocar el resto del sistema.
 
-## Modelo de datos (`prisma/schema.prisma`)
+## Tecnologías
 
-Decisiones clave, mapeadas a los requisitos del spec:
+- **Next.js 14** (App Router) + React + TypeScript
+- **Prisma ORM** + **PostgreSQL (Neon)**
+- **bcryptjs** (hash de contraseñas) + **jose** (JWT de sesión)
+- **Vitest** (tests del dominio)
 
-| Requisito del spec | Cómo se resolvió en el modelo |
-|---|---|
-| Nunca sobrescribir tratamiento silenciosamente (sección 7) | `InsulinRegimen` (la insulina) está separado de `RegimenVersion` (sus parámetros en el tiempo). Cada cambio crea una fila nueva con `effectiveFrom`/`effectiveTo`; nunca se edita una versión existente. |
-| CGM vs sangre nunca se pierde (secciones 9–10) | `GlucoseReading.measurementSource` es un enum obligatorio (`BLOOD`/`CGM`). No existe forma de guardar un valor de glucosa sin su fuente. |
-| Todo cálculo es auditable (sección 34) | `DoseCalculation` guarda `inputValues`, `inputSources`, `parametersUsed`, `rulesTriggered`, `output`, `warnings`, `safetyStatus` — como JSON inmutable, nunca se sobrescribe una fila existente. |
-| Alimentos regionales/LATAM (sección 12) | `FoodItem` incluye `region` y `portionUnit` libre (no atado a unidades tipo USDA). |
-| Foto de comida — estimación nunca es dato válido por sí sola (sección 11) | `Meal.aiEstimatedCarbsG` es un campo separado de `carbsGDirect`, y `aiEstimationConfirmed` debe ser `true` explícitamente. El `SafetyEngine` bloquea el cálculo si no está confirmada. |
-| Estrés/sueño como contexto reportado, no medición clínica (sección 17) | `ContextEvent.reportedStress` (no "cortisol" ni nada médico) — nombrado deliberadamente como "reportado". |
-| IOB reservado pero no inventado (sección 15) | `InsulinActivityEngine` existe como clase con método que lanza error explícito hasta que se valide clínicamente — no hay ningún modelo farmacocinético implícito en el modelo de datos ni en el motor. |
+## Base de datos
 
-## Motores de dominio — estado de cada uno
+Motor: PostgreSQL en Neon. Ver `prisma/schema.prisma` para el modelo
+completo: `User`, `InsulinRegimen` + `RegimenVersion` (versionado),
+`GlucoseReading`, `FoodItem`, `Meal` + `MealItem`, `HabitualMeal`,
+`InsulinEvent`, `ExerciseEvent`, `ContextEvent`, `DoseCalculation`
+(auditoría inmutable), `Alert`, `FollowUp`, `Report`, `AuditLog`.
 
-- **`SafetyEngine`** ✅ Implementado. Reglas: glucosa baja/muy baja (bloquea),
-  datos faltantes, estimación de foto no confirmada, dosis reciente sin
-  confirmar, glucosa muy alta, problema de tendencia CGM, ejercicio intenso
-  reciente, enfermedad reportada. **Los umbrales numéricos son un esqueleto
-  conservador y están marcados `TODO — Clinical validation required`.**
-- **`DoseCalculationEngine`** ✅ Implementado. Determinista, sin IA. Calcula
-  dosis por carbohidratos + corrección únicamente si los parámetros
-  correspondientes existen en el perfil del paciente; nunca asume un valor
-  por defecto.
-- **`MealEngine`** ✅ Implementado. Normaliza los 3 métodos de registro de
-  comida en un `MealInput` común.
-- **`NotificationEngine`** ✅ Implementado (reglas de tiempo siempre
-  configurables por el paciente, nunca fijas).
-- **`PatternEngine`** 🚧 Implementación mínima (detecta comidas repetidas con
-  glucosa post-comida alta) + lista explícita de TODOs para el resto.
-- **`InsulinActivityEngine`** 🚧 Stub que lanza error intencionalmente — no
-  se implementa cálculo de insulina activa (IOB) sin validación clínica de
-  los parámetros farmacocinéticos.
-
-## Tests
+## Instalación
 
 ```bash
 npm install
+cp .env.example .env
+# edita .env con tus connection strings de Neon y un SESSION_SECRET
+npx prisma generate
+npx prisma migrate dev --name init   # si es la primera vez
+npm run dev
+```
+
+## Variables de entorno
+
+Ver `.env.example`. Se necesitan tres:
+
+- `DATABASE_URL` — connection string pooled de Neon.
+- `DIRECT_URL` — connection string directa de Neon (para migraciones).
+- `SESSION_SECRET` — cadena aleatoria larga para firmar las cookies de
+  sesión. Generar con `openssl rand -base64 32`.
+
+## Testing
+
+```bash
 npm test
 ```
 
 12 tests sobre `SafetyEngine` y la integración `SafetyEngine` +
-`DoseCalculationEngine`, incluyendo el caso más crítico: **verificar que
-nunca se devuelve una dosis cuando el SafetyEngine bloquea el cálculo**.
-Todos pasan (`npx vitest run` → 12/12 ✅).
+`DoseCalculationEngine`, incluyendo el caso más crítico: verificar que nunca
+se devuelve una dosis cuando el `SafetyEngine` bloquea el cálculo.
 
-## Base de datos
+**No hay tests automatizados todavía para las rutas de autenticación ni para
+los endpoints CRUD (glucosa, comidas, insulina, actividad)** — quedan como
+pendiente explícito.
 
-Motor: **PostgreSQL en Neon**. `schema.prisma` usa `enum` y `Json` nativos
-(Postgres sí los soporta — a diferencia de SQLite, que se usó en una
-iteración anterior de este MVP y obligaba a simular enums con `String`).
+## Deployment
 
-### Configurar Neon
+Ver instrucciones detalladas más abajo en la conversación del proyecto.
+Resumen: Vercel (Next.js) + Neon (Postgres), con `DATABASE_URL`,
+`DIRECT_URL` y `SESSION_SECRET` configuradas como variables de entorno en
+el proyecto de Vercel.
 
-1. En el dashboard de Neon, entra a tu proyecto → **Connection Details**.
-2. Copia dos connection strings distintas:
-   - La **pooled** (el host incluye `-pooler`) → va en `DATABASE_URL`. Es la
-     que usa la app en tiempo de ejecución.
-   - La **directa** (sin `-pooler`) → va en `DIRECT_URL`. Prisma la necesita
-     específicamente para correr migraciones; con la pooled las migraciones
-     pueden fallar o comportarse de forma inconsistente.
-3. Copia `.env.example` a `.env` y pega ambas.
+## Arquitectura de seguridad
 
-```bash
-cp .env.example .env
-# edita .env con tus dos connection strings de Neon
-npx prisma generate
-npx prisma migrate dev --name init
-```
+- Contraseñas nunca se guardan en texto plano (bcrypt, costo 12).
+- Sesión en cookie `httpOnly`, `secure` en producción, firmada con JWT.
+- Middleware protege todas las rutas salvo login/registro/health.
+- Mensajes de error de login genéricos (no revelan si el correo existe).
+- `SafetyEngine` bloquea el cálculo de dosis ante glucosa baja, datos
+  faltantes, estimaciones de foto no confirmadas, etc. — ver
+  `src/domain/SafetyEngine.ts`.
+- **Pendiente**: rate limiting en endpoints de auth, verificación de correo,
+  recuperación de contraseña, roles/permisos más allá de "dueño del dato".
 
-`prisma migrate dev` crea las tablas directamente en tu base de Neon (no hay
-archivo `.db` local como con SQLite).
+## Estado de validación clínica
 
-## Lista explícita de funciones que requieren validación clínica antes de producción
+**Nada en esta aplicación ha sido validado clínicamente.** Es un MVP de
+desarrollo. Específicamente:
 
-(sección 16 de los entregables pedidos)
+- Los umbrales del `SafetyEngine` (glucosa baja/alta, ventana de dosis
+  reciente) son un esqueleto conservador, no valores clínicamente
+  confirmados — están marcados `TODO — Clinical validation required` en el
+  código.
+- `InsulinActivityEngine` no está implementado a propósito.
+- El `DoseCalculationEngine` no está conectado a ninguna pantalla todavía —
+  aunque estuviera, no debe usarse como prescripción real sin validación.
 
-1. Umbrales numéricos del `SafetyEngine` (glucosa baja/muy baja/muy alta,
-   ventana de "dosis reciente", umbral de ejercicio intenso).
-2. Cualquier implementación de `InsulinActivityEngine` (modelo
-   farmacocinético / duración de acción por tipo de insulina).
-3. Umbral y heurísticas de `PatternEngine` más allá del conteo simple ya
-   implementado.
-4. Cualquier futura estimación de carbohidratos por foto (IA) — el flujo de
-   confirmación obligatoria ya existe en el modelo, pero el modelo de IA en
-   sí no se ha construido.
-5. Duración de acción de insulinas para deduplicación de dosis (hoy la regla
-   `RECENT_INSULIN_DOSE` usa una ventana fija de 60 minutos genérica, no
-   basada en el tipo de insulina real).
+## Roadmap
 
-## Próximos pasos (según el orden pedido en el spec)
-
-1. ✅ Arquitectura + modelo de datos (esta entrega).
-2. Flujo principal: onboarding, perfil de tratamiento, registro de glucosa/
-   comida/insulina/ejercicio/contexto, timeline "Mi día".
-3. Seguridad/alertas: exponer `SafetyEngine`/`Alert`/`FollowUp` en la UI,
-   `NotificationEngine` con recordatorios reales.
-4. Reportes/exportación: "Informe para mi equipo de salud" + PDF/CSV/JSON.
-5. UX/pulido.
+1. ✅ Arquitectura + modelo de datos
+2. ✅ Autenticación + tratamiento + registro básico (glucosa/comidas/insulina/actividad) + Mi día
+3. Conectar `SafetyEngine`/`DoseCalculationEngine` a la pantalla de Insulina (modo simulación, con aviso explícito)
+4. Estrés/sueño en UI, alertas en UI, seguimientos
+5. Mis patrones (UI)
+6. Informe para el equipo de salud + exportación PDF/CSV/JSON
+7. Testing de rutas API y flujo end-to-end
+8. Pulido UX/UI, estados vacíos, i18n
