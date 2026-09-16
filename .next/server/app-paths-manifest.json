@@ -1,1 +1,12 @@
-{}
+{
+  "/api/glucosa/route": "app/api/glucosa/route.js",
+  "/api/insulina/route": "app/api/insulina/route.js",
+  "/api/comidas/route": "app/api/comidas/route.js",
+  "/(main)/tratamiento/page": "app/(main)/tratamiento/page.js",
+  "/(main)/glucosa/page": "app/(main)/glucosa/page.js",
+  "/(main)/hoy/page": "app/(main)/hoy/page.js",
+  "/(main)/comidas/page": "app/(main)/comidas/page.js",
+  "/(main)/mi-dia/page": "app/(main)/mi-dia/page.js",
+  "/(main)/actividad/page": "app/(main)/actividad/page.js",
+  "/(main)/insulina/page": "app/(main)/insulina/page.js"
+}
