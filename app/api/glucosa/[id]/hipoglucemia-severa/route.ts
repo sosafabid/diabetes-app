@@ -22,21 +22,42 @@ export async function POST(
     );
   }
 
-  const updated = await prisma.hypoglycemiaEvent.update({
-    where: { id: event.id },
-    data: { status: "SEVERE", severeMarkedAt: new Date() },
-  });
+  const updated = await prisma.$transaction(async (tx) => {
+    const result = await tx.hypoglycemiaEvent.update({
+      where: { id: event.id },
+      data: { status: "SEVERE", severeMarkedAt: new Date() },
+    });
 
-  await prisma.alert.create({
-    data: {
-      userId: session.userId,
-      type: "LOW_GLUCOSE",
-      severity: "CRITICAL",
-      message:
-        "Se marcó una hipoglucemia severa. Busca asistencia de emergencia si no la has buscado ya.",
-      relatedEntityType: "HypoglycemiaEvent",
-      relatedEntityId: event.id,
-    },
+    // Resolver la alerta original de glucosa baja — ya se actuó (se marcó
+    // como severa), no debe seguir apareciendo como pendiente en "Hoy".
+    await tx.alert.updateMany({
+      where: {
+        userId: session.userId,
+        relatedEntityType: "GlucoseReading",
+        relatedEntityId: params.id,
+        resolvedAt: null,
+      },
+      data: { resolvedAt: new Date() },
+    });
+
+    // Esta alerta queda ya resuelta al crearse: el paciente/cuidador ya hizo
+    // clic en "ya busqué ayuda", que es la acción que representaba. Queda
+    // igualmente registrada en el historial (Alert.resolvedAt con valor,
+    // no eliminada) para trazabilidad — solo deja de mostrarse como pendiente.
+    await tx.alert.create({
+      data: {
+        userId: session.userId,
+        type: "LOW_GLUCOSE",
+        severity: "CRITICAL",
+        message:
+          "Se marcó una hipoglucemia severa. Se buscó asistencia de emergencia.",
+        relatedEntityType: "HypoglycemiaEvent",
+        relatedEntityId: event.id,
+        resolvedAt: new Date(),
+      },
+    });
+
+    return result;
   });
 
   return NextResponse.json({ event: updated });

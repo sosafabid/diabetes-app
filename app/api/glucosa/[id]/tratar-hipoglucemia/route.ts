@@ -64,7 +64,7 @@ export async function POST(
       },
     });
 
-    return tx.hypoglycemiaEvent.update({
+    const updatedEvent = await tx.hypoglycemiaEvent.update({
       where: { id: event.id },
       data: {
         status: "TREATED",
@@ -75,6 +75,20 @@ export async function POST(
       },
       include: { followUp: true },
     });
+
+    // Ya se actuó sobre la hipoglucemia — resolver la alerta que la
+    // acompañaba para que no se acumule indefinidamente en "Hoy".
+    await tx.alert.updateMany({
+      where: {
+        userId: session.userId,
+        relatedEntityType: "GlucoseReading",
+        relatedEntityId: params.id,
+        resolvedAt: null,
+      },
+      data: { resolvedAt: new Date() },
+    });
+
+    return updatedEvent;
   });
 
   return NextResponse.json({ event: result });
