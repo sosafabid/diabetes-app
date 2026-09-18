@@ -99,18 +99,20 @@ export default async function MiDiaPage() {
               ? "Marcada como severa"
               : "Resuelta",
     })),
-    ...context.map((c) => ({
-      id: `c-${c.id}`,
-      timestamp: c.timestamp,
-      icon: "🧠",
-      label: "Contexto",
-      detail: [
-        c.reportedStress && `Estrés: ${c.reportedStress}`,
-        c.sleepHours != null && `Sueño: ${c.sleepHours}h`,
-      ]
-        .filter(Boolean)
-        .join(" · "),
-    })),
+    ...context.map((c) => {
+      const moodLabels: Record<string, string> = {
+        LOW: "😌 Tranquilo/a",
+        MODERATE: "😐 Normal",
+        HIGH: "😣 Estresado/a",
+      };
+      return {
+        id: `c-${c.id}`,
+        timestamp: c.timestamp,
+        icon: "🧠",
+        label: "Estado de ánimo",
+        detail: c.reportedStress ? moodLabels[c.reportedStress] ?? c.reportedStress : "",
+      };
+    }),
   ].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
   return (

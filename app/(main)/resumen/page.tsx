@@ -46,7 +46,8 @@ function chartRangeDates(range: string, selectedDay?: Date): { start: Date; end:
   const end = new Date();
   end.setHours(23, 59, 59, 999);
   const start = new Date();
-  switch (range) {    case "week":
+  switch (range) {
+    case "week":
       start.setDate(start.getDate() - 6);
       start.setHours(0, 0, 0, 0);
       break;
@@ -276,14 +277,6 @@ export default async function ResumenPage({
             lowThreshold={plan?.lowThreshold}
           />
         )}
-        <p className="form-hint">
-          🧠 "Estrés reportado" viene del modelo de datos de Estrés/Sueño — el
-          formulario para registrarlo en la UI todavía no existe, así que este
-          carril estará vacío hasta que lo construyamos. La app no mide
-          cortisol ni ningún biomarcador; siempre sería un valor que tú
-          reportas.
-        </p>
-
       </section>
 
       {/* Distribución de glucosa — nunca mezcla sangre y CGM */}

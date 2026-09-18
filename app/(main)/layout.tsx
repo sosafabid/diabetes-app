@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { href: "/comidas", label: "🍽️ Comidas" },
   { href: "/insulina", label: "💉 Insulina" },
   { href: "/actividad", label: "🏃 Actividad" },
+  { href: "/bienestar", label: "🧠 Estado de ánimo" },
   { href: "/mi-dia", label: "📊 Mi día" },
   { href: "/resumen", label: "📈 Resumen" },
   { href: "/tratamiento", label: "⚙️ Mi tratamiento" },
@@ -27,7 +28,7 @@ export default async function MainLayout({
   return (
     <div className="app-shell">
       <header className="app-header">
-        <span className="app-title">Stay Alive ILU</span>
+        <span className="app-title">Acompañante de diabetes</span>
         <div className="app-header-right">
           {user && <span className="app-user">{user.name}</span>}
           <LogoutButton />

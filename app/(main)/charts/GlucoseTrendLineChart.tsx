@@ -90,8 +90,10 @@ export default function GlucoseTrendLineChart({
   const allAverages = [...bloodDaily, ...cgmDaily].map((d) => d.average);
   const rawMin = Math.min(...allAverages, lowThreshold);
   const rawMax = Math.max(...allAverages, highThreshold);
-  const yMin = Math.max(0, Math.floor((rawMin - 15) / 10) * 10);
-  const yMax = Math.ceil((rawMax + 15) / 10) * 10;
+  // El rango siempre cubre al menos 20-350 mg/dL, y se expande más si algún
+  // promedio diario o umbral configurado va todavía más allá de eso.
+  const yMin = Math.max(0, Math.min(20, Math.floor((rawMin - 10) / 10) * 10));
+  const yMax = Math.max(350, Math.ceil((rawMax + 10) / 10) * 10);
 
   const totalMs = rangeEnd.getTime() - rangeStart.getTime();
   const chartWidth = WIDTH - MARGIN_LEFT - MARGIN_RIGHT;
@@ -150,12 +152,25 @@ export default function GlucoseTrendLineChart({
           />
         )}
 
-        <text x={2} y={MARGIN_TOP + 4} fontSize="9" fill="var(--color-text-muted)">
-          {yMax}
-        </text>
-        <text x={2} y={MARGIN_TOP + CHART_HEIGHT} fontSize="9" fill="var(--color-text-muted)">
-          {yMin}
-        </text>
+        {[0, 0.25, 0.5, 0.75, 1].map((frac) => {
+          const value = Math.round((yMin + (yMax - yMin) * (1 - frac)) / 10) * 10;
+          const y = MARGIN_TOP + frac * CHART_HEIGHT;
+          return (
+            <g key={`gridline-${frac}`}>
+              <line
+                x1={MARGIN_LEFT}
+                x2={WIDTH - MARGIN_RIGHT}
+                y1={y}
+                y2={y}
+                stroke="var(--color-border)"
+                strokeWidth={1}
+              />
+              <text x={2} y={y + 4} fontSize="11" fill="var(--color-text-muted)">
+                {value}
+              </text>
+            </g>
+          );
+        })}
 
         {bloodDaily.length > 0 && (
           <path d={pathFor(bloodDaily)} fill="none" stroke="var(--color-danger)" strokeWidth={2} />
