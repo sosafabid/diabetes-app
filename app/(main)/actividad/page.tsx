@@ -1,5 +1,6 @@
 import { prisma } from "../../../src/lib/prisma";
 import { requireSession } from "../../../src/lib/auth-guard";
+import { getUserTimeZone } from "../../../src/lib/timezone";
 import RegistrarActividadForm from "./RegistrarActividadForm";
 
 const TIPO_LABELS: Record<string, string> = {
@@ -15,6 +16,7 @@ const TIPO_LABELS: Record<string, string> = {
 
 export default async function ActividadPage() {
   const session = await requireSession();
+  const timeZone = await getUserTimeZone();
   const events = await prisma.exerciseEvent.findMany({
     where: { userId: session.userId },
     orderBy: { timestamp: "desc" },
@@ -38,7 +40,7 @@ export default async function ActividadPage() {
               <span>{TIPO_LABELS[ev.type] ?? ev.type}</span>
               <span className="event-value">{ev.duration} min</span>
               <span className="event-time">
-                {new Date(ev.timestamp).toLocaleString("es-CR")}
+                {new Date(ev.timestamp).toLocaleString("es-CR", { timeZone })}
               </span>
             </li>
           ))}

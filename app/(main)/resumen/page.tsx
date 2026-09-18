@@ -1,18 +1,26 @@
 import { prisma } from "../../../src/lib/prisma";
 import { requireSession } from "../../../src/lib/auth-guard";
 import { SummaryEngine } from "../../../src/domain/SummaryEngine";
-import { resolvePeriod, parseDateOnlyLocal } from "../../../src/domain/resolvePeriod";
 import type { PeriodType } from "../../../src/domain/summaryTypes";
 import PeriodSelector from "./PeriodSelector";
 import StatBar from "./StatBar";
 import GlucoseRangeBar from "./GlucoseRangeBar";
-import ChartRangeSelector from "../charts/ChartRangeSelector";
 import GlucoseDayChart from "../charts/GlucoseDayChart";
 import GlucoseTrendLineChart from "../charts/GlucoseTrendLineChart";
-import DayPicker from "../charts/DayPicker";
+import {
+  getUserTimeZone,
+  zonedStartOfDay,
+  zonedEndOfDay,
+  zonedAddDays,
+  zonedMonthRange,
+  parseYMDInTZ,
+  formatYMDInTZ,
+} from "../../../src/lib/timezone";
 
-const VALID_PERIOD_TYPES: PeriodType[] = ["day", "7d", "14d", "30d", "month", "custom"];
-const VALID_CHART_RANGES = ["day", "week", "month", "3m", "6m"];
+// Un solo período controla TODO en esta página: las tarjetas de resumen,
+// la distribución de glucosa, insulina/comidas/actividad, y el gráfico de
+// tendencia — ya no hay un selector separado para el gráfico.
+const VALID_PERIODS = ["day", "7d", "14d", "30d", "month", "3m", "6m", "custom"];
 
 const MEAL_TYPE_LABELS: Record<string, string> = {
   BREAKFAST: "Desayuno",
@@ -33,139 +41,95 @@ const EXERCISE_TYPE_LABELS: Record<string, string> = {
   OTHER: "Otra",
 };
 
-function chartRangeDates(range: string, selectedDay?: Date): { start: Date; end: Date } {
-  if (range === "day") {
-    const base = selectedDay ?? new Date();
-    const start = new Date(base);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(base);
-    end.setHours(23, 59, 59, 999);
-    return { start, end };
-  }
+function computeRange(
+  periodType: string,
+  timeZone: string,
+  opts: { day?: string; from?: string; to?: string },
+): { start: Date; end: Date; error: string | null } {
+  const now = new Date();
 
-  const end = new Date();
-  end.setHours(23, 59, 59, 999);
-  const start = new Date();
-  switch (range) {
-    case "week":
-      start.setDate(start.getDate() - 6);
-      start.setHours(0, 0, 0, 0);
-      break;
-    case "month":
-      start.setDate(start.getDate() - 29);
-      start.setHours(0, 0, 0, 0);
-      break;
-    case "3m":
-      start.setDate(start.getDate() - 89);
-      start.setHours(0, 0, 0, 0);
-      break;
-    case "6m":
-      start.setDate(start.getDate() - 179);
-      start.setHours(0, 0, 0, 0);
-      break;
-    default:
-      start.setHours(0, 0, 0, 0);
+  if (periodType === "day") {
+    const base = opts.day ? parseYMDInTZ(opts.day, timeZone) : now;
+    return { start: zonedStartOfDay(base, timeZone), end: zonedEndOfDay(base, timeZone), error: null };
   }
-  return { start, end };
+  if (periodType === "month") {
+    const range = zonedMonthRange(now, timeZone);
+    return { ...range, error: null };
+  }
+  if (periodType === "custom") {
+    if (!opts.from || !opts.to) {
+      return {
+        start: zonedStartOfDay(zonedAddDays(now, -6, timeZone), timeZone),
+        end: zonedEndOfDay(now, timeZone),
+        error: "Selecciona una fecha de inicio y fin para el período personalizado.",
+      };
+    }
+    return {
+      start: zonedStartOfDay(parseYMDInTZ(opts.from, timeZone), timeZone),
+      end: zonedEndOfDay(parseYMDInTZ(opts.to, timeZone), timeZone),
+      error: null,
+    };
+  }
+  const daysBack: Record<string, number> = { "7d": 6, "14d": 13, "30d": 29, "3m": 89, "6m": 179 };
+  const back = daysBack[periodType] ?? 6;
+  return {
+    start: zonedStartOfDay(zonedAddDays(now, -back, timeZone), timeZone),
+    end: zonedEndOfDay(now, timeZone),
+    error: null,
+  };
 }
 
 export default async function ResumenPage({
   searchParams,
 }: {
-  searchParams: {
-    period?: string;
-    from?: string;
-    to?: string;
-    chartRange?: string;
-    day?: string;
-  };
+  searchParams: { period?: string; day?: string; from?: string; to?: string };
 }) {
   const session = await requireSession();
+  const timeZone = await getUserTimeZone();
 
-  const periodType: PeriodType = VALID_PERIOD_TYPES.includes(
-    searchParams.period as PeriodType,
-  )
-    ? (searchParams.period as PeriodType)
+  const periodType = VALID_PERIODS.includes(searchParams.period ?? "")
+    ? (searchParams.period as string)
     : "7d";
 
-  let period;
-  let periodError: string | null = null;
-  try {
-    period = resolvePeriod(
-      periodType,
-      new Date(),
-      searchParams.from ? parseDateOnlyLocal(searchParams.from) : undefined,
-      searchParams.to ? parseDateOnlyLocal(searchParams.to) : undefined,
-    );
-  } catch {
-    periodError = "Selecciona una fecha de inicio y fin para el período personalizado.";
-    period = resolvePeriod("7d");
-  }
+  const { start, end, error: periodError } = computeRange(periodType, timeZone, {
+    day: searchParams.day,
+    from: searchParams.from,
+    to: searchParams.to,
+  });
 
-  const chartRange = VALID_CHART_RANGES.includes(searchParams.chartRange ?? "")
-    ? (searchParams.chartRange as string)
-    : "day";
-  const selectedDay = searchParams.day ? parseDateOnlyLocal(searchParams.day) : new Date();
-  const chartDates = chartRangeDates(chartRange, selectedDay);
-  const selectedDayStr = `${selectedDay.getFullYear()}-${String(selectedDay.getMonth() + 1).padStart(2, "0")}-${String(selectedDay.getDate()).padStart(2, "0")}`;
+  const selectedDayStr = searchParams.day ?? formatYMDInTZ(new Date(), timeZone);
 
-  const [
-    glucoseReadings,
-    insulinEvents,
-    meals,
-    exerciseEvents,
-    hypoglycemiaEvents,
-    plan,
-    chartGlucose,
-    chartInsulin,
-    chartMeals,
-    chartExercise,
-    chartContext,
-  ] = await Promise.all([
-    prisma.glucoseReading.findMany({
-      where: { userId: session.userId, timestamp: { gte: period.start, lte: period.end } },
-    }),
-    prisma.insulinEvent.findMany({
-      where: { userId: session.userId, timestamp: { gte: period.start, lte: period.end } },
-      include: { insulinRegimen: true },
-    }),
-    prisma.meal.findMany({
-      where: { userId: session.userId, timestamp: { gte: period.start, lte: period.end } },
-    }),
-    prisma.exerciseEvent.findMany({
-      where: { userId: session.userId, timestamp: { gte: period.start, lte: period.end } },
-    }),
-    prisma.hypoglycemiaEvent.findMany({
-      where: { userId: session.userId, createdAt: { gte: period.start, lte: period.end } },
-    }),
-    prisma.hypoglycemiaPlan.findFirst({
-      where: { userId: session.userId, effectiveTo: null },
-      orderBy: { effectiveFrom: "desc" },
-    }),
-    prisma.glucoseReading.findMany({
-      where: { userId: session.userId, timestamp: { gte: chartDates.start, lte: chartDates.end } },
-    }),
-    prisma.insulinEvent.findMany({
-      where: { userId: session.userId, timestamp: { gte: chartDates.start, lte: chartDates.end } },
-    }),
-    prisma.meal.findMany({
-      where: { userId: session.userId, timestamp: { gte: chartDates.start, lte: chartDates.end } },
-    }),
-    prisma.exerciseEvent.findMany({
-      where: { userId: session.userId, timestamp: { gte: chartDates.start, lte: chartDates.end } },
-    }),
-    prisma.contextEvent.findMany({
-      where: {
-        userId: session.userId,
-        timestamp: { gte: chartDates.start, lte: chartDates.end },
-        reportedStress: { not: null },
-      },
-    }),
-  ]);
+  const [glucoseReadings, insulinEvents, meals, exerciseEvents, hypoglycemiaEvents, plan, contextEvents] =
+    await Promise.all([
+      prisma.glucoseReading.findMany({
+        where: { userId: session.userId, timestamp: { gte: start, lte: end } },
+      }),
+      prisma.insulinEvent.findMany({
+        where: { userId: session.userId, timestamp: { gte: start, lte: end } },
+        include: { insulinRegimen: true },
+      }),
+      prisma.meal.findMany({
+        where: { userId: session.userId, timestamp: { gte: start, lte: end } },
+      }),
+      prisma.exerciseEvent.findMany({
+        where: { userId: session.userId, timestamp: { gte: start, lte: end } },
+      }),
+      prisma.hypoglycemiaEvent.findMany({
+        where: { userId: session.userId, createdAt: { gte: start, lte: end } },
+      }),
+      prisma.hypoglycemiaPlan.findFirst({
+        where: { userId: session.userId, effectiveTo: null },
+        orderBy: { effectiveFrom: "desc" },
+      }),
+      prisma.contextEvent.findMany({
+        where: { userId: session.userId, timestamp: { gte: start, lte: end }, reportedStress: { not: null } },
+      }),
+    ]);
 
   const engine = new SummaryEngine();
   const summary = engine.compute({
-    period,
+    // El motor solo usa start/end para los cálculos; "type" es informativo.
+    period: { type: periodType as unknown as PeriodType, start, end },
     lowThresholdMgdl: plan?.lowThreshold,
     glucoseReadings: glucoseReadings.map((r) => ({
       timestamp: r.timestamp,
@@ -204,7 +168,7 @@ export default async function ResumenPage({
   }, {});
   const maxActivityMinutes = Math.max(1, ...Object.values(minutesByActivityType));
 
-  const chartGlucosePoints = chartGlucose.map((r) => ({
+  const glucosePoints = glucoseReadings.map((r) => ({
     timestamp: r.timestamp,
     value: r.glucoseValue,
     unit: r.unit,
@@ -215,10 +179,15 @@ export default async function ResumenPage({
     <div className="page">
       <h1>Resumen</h1>
       <p className="page-subtitle">
-        {period.start.toLocaleDateString("es-CR")} – {period.end.toLocaleDateString("es-CR")}
+        {start.toLocaleDateString("es-CR", { timeZone })} – {end.toLocaleDateString("es-CR", { timeZone })}
       </p>
 
-      <PeriodSelector currentPeriod={periodType} />
+      <PeriodSelector
+        currentPeriod={periodType}
+        currentDay={selectedDayStr}
+        initialFrom={searchParams.from}
+        initialTo={searchParams.to}
+      />
       {periodError && <p className="form-error">{periodError}</p>}
 
       {summary.missingDataNotes.length > 0 && (
@@ -251,29 +220,24 @@ export default async function ResumenPage({
         </div>
       </div>
 
-      {/* Tendencia de glucosa — día con eventos, o promedio diario para rangos largos */}
+      {/* Tendencia de glucosa — usa exactamente el mismo período de arriba */}
       <section className="summary-section" id="tendencia">
         <h2>📈 Tendencia de glucosa</h2>
-        <ChartRangeSelector current={chartRange} />
-        {chartRange === "day" && <DayPicker currentDay={selectedDayStr} />}
-        {chartRange === "day" ? (
+        {periodType === "day" ? (
           <GlucoseDayChart
-            glucoseReadings={chartGlucosePoints}
-            insulinEvents={chartInsulin.map((e) => ({ timestamp: e.timestamp }))}
-            mealEvents={chartMeals.map((m) => ({ timestamp: m.timestamp }))}
-            activityEvents={chartExercise.map((e) => ({ timestamp: e.timestamp }))}
-            stressEvents={chartContext.map((c) => ({ timestamp: c.timestamp }))}
+            glucoseReadings={glucosePoints}
+            insulinEvents={insulinEvents.map((e) => ({ timestamp: e.timestamp }))}
+            mealEvents={meals.map((m) => ({ timestamp: m.timestamp }))}
+            activityEvents={exerciseEvents.map((e) => ({ timestamp: e.timestamp }))}
+            stressEvents={contextEvents.map((c) => ({ timestamp: c.timestamp }))}
             lowThreshold={plan?.lowThreshold}
+            timeZone={timeZone}
           />
         ) : (
           <GlucoseTrendLineChart
-            glucoseReadings={chartGlucosePoints}
-            rangeStart={chartDates.start}
-            rangeEnd={chartDates.end}
-            insulinEvents={chartInsulin.map((e) => ({ timestamp: e.timestamp }))}
-            mealEvents={chartMeals.map((m) => ({ timestamp: m.timestamp }))}
-            activityEvents={chartExercise.map((e) => ({ timestamp: e.timestamp }))}
-            stressEvents={chartContext.map((c) => ({ timestamp: c.timestamp }))}
+            glucoseReadings={glucosePoints}
+            rangeStart={start}
+            rangeEnd={end}
             lowThreshold={plan?.lowThreshold}
           />
         )}

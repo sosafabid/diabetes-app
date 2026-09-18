@@ -1,5 +1,6 @@
 import { prisma } from "../../../src/lib/prisma";
 import { requireSession } from "../../../src/lib/auth-guard";
+import { getUserTimeZone, zonedStartOfDay, formatTimeInTZ } from "../../../src/lib/timezone";
 
 type TimelineEvent = {
   id: string;
@@ -30,9 +31,9 @@ const EXERCISE_LABELS: Record<string, string> = {
 
 export default async function MiDiaPage() {
   const session = await requireSession();
+  const timeZone = await getUserTimeZone();
 
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+  const startOfDay = zonedStartOfDay(new Date(), timeZone);
 
   const [glucose, meals, insulin, exercise, context, hypoEvents] = await Promise.all([
     prisma.glucoseReading.findMany({
@@ -123,6 +124,7 @@ export default async function MiDiaPage() {
           weekday: "long",
           day: "numeric",
           month: "long",
+          timeZone,
         })}
       </p>
 
@@ -135,10 +137,7 @@ export default async function MiDiaPage() {
           {events.map((ev) => (
             <li key={ev.id} className="timeline-item">
               <span className="timeline-time">
-                {ev.timestamp.toLocaleTimeString("es-CR", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
+                {formatTimeInTZ(ev.timestamp, timeZone)}
               </span>
               <span className="timeline-icon">{ev.icon}</span>
               <span className="timeline-label">{ev.label}</span>

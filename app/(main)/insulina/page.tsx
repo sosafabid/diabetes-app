@@ -1,5 +1,6 @@
 import { prisma } from "../../../src/lib/prisma";
 import { requireSession } from "../../../src/lib/auth-guard";
+import { getUserTimeZone } from "../../../src/lib/timezone";
 import RegistrarInsulinaForm from "./RegistrarInsulinaForm";
 
 const PROP_LABELS: Record<string, string> = {
@@ -11,6 +12,7 @@ const PROP_LABELS: Record<string, string> = {
 
 export default async function InsulinaPage() {
   const session = await requireSession();
+  const timeZone = await getUserTimeZone();
   const [regimens, events] = await Promise.all([
     prisma.insulinRegimen.findMany({
       where: { userId: session.userId, isActive: true },
@@ -48,7 +50,7 @@ export default async function InsulinaPage() {
               <span className="event-value">{ev.dose} U</span>
               <span>{PROP_LABELS[ev.purpose] ?? ev.purpose}</span>
               <span className="event-time">
-                {new Date(ev.timestamp).toLocaleString("es-CR")}
+                {new Date(ev.timestamp).toLocaleString("es-CR", { timeZone })}
               </span>
             </li>
           ))}

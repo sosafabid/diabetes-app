@@ -9,7 +9,7 @@ export default function DayPicker({ currentDay }: { currentDay: string }) {
   function handleChange(value: string) {
     if (!value) return;
     const params = new URLSearchParams(searchParams.toString());
-    params.set("chartRange", "day");
+    params.set("period", "day");
     params.set("day", value);
     router.push(`/resumen?${params.toString()}#tendencia`);
   }

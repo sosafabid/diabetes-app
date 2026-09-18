@@ -5,6 +5,8 @@
 // de su altura real de glucosa (eje Y) — así se puede ver visualmente qué
 // pasó justo antes/después de cada evento, en vez de una fila separada sin
 // relación con la curva.
+import { minutesSinceMidnightInTZ } from "../../../src/lib/timezone";
+
 type Source = "BLOOD" | "CGM";
 
 interface GlucosePoint {
@@ -66,13 +68,9 @@ function toMgdl(value: number, unit: "MGDL" | "MMOLL") {
   return unit === "MMOLL" ? value * 18.0182 : value;
 }
 
-function minutesSinceMidnight(d: Date) {
-  return d.getHours() * 60 + d.getMinutes();
-}
-
-function xForTime(d: Date) {
+function xForTime(d: Date, timeZone: string) {
   const chartWidth = WIDTH - MARGIN_LEFT - MARGIN_RIGHT;
-  return MARGIN_LEFT + (minutesSinceMidnight(d) / (24 * 60)) * chartWidth;
+  return MARGIN_LEFT + (minutesSinceMidnightInTZ(d, timeZone) / (24 * 60)) * chartWidth;
 }
 
 /** Encuentra el valor de glucosa más cercano en el tiempo a un evento, para
@@ -102,6 +100,7 @@ export default function GlucoseDayChart({
   stressEvents = [],
   lowThreshold = 70,
   highThreshold = 180,
+  timeZone,
 }: {
   glucoseReadings: GlucosePoint[];
   insulinEvents: EventMarker[];
@@ -110,6 +109,7 @@ export default function GlucoseDayChart({
   stressEvents?: EventMarker[];
   lowThreshold?: number;
   highThreshold?: number;
+  timeZone: string;
 }) {
   if (glucoseReadings.length === 0) {
     return (
@@ -140,8 +140,8 @@ export default function GlucoseDayChart({
   const bloodPoints = points.filter((p) => p.source === "BLOOD");
   const cgmPoints = points.filter((p) => p.source === "CGM");
 
-  const bloodXY = bloodPoints.map((p) => ({ x: xForTime(p.timestamp), y: yForValue(p.mgdl) }));
-  const cgmXY = cgmPoints.map((p) => ({ x: xForTime(p.timestamp), y: yForValue(p.mgdl) }));
+  const bloodXY = bloodPoints.map((p) => ({ x: xForTime(p.timestamp, timeZone), y: yForValue(p.mgdl) }));
+  const cgmXY = cgmPoints.map((p) => ({ x: xForTime(p.timestamp, timeZone), y: yForValue(p.mgdl) }));
 
   const bloodPath = smoothPath(bloodXY);
   const cgmPath = smoothPath(cgmXY);
@@ -159,13 +159,13 @@ export default function GlucoseDayChart({
     return events.map((e, i) => (
       <text
         key={`${kind}-${i}`}
-        x={xForTime(e.timestamp)}
+        x={xForTime(e.timestamp, timeZone)}
         y={iconY(e.timestamp, kind)}
         fontSize="17"
         textAnchor="middle"
       >
         {emoji}
-        <title>{`${e.timestamp.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit" })}`}</title>
+        <title>{`${e.timestamp.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit", timeZone })}`}</title>
       </text>
     ));
   }
@@ -263,27 +263,27 @@ export default function GlucoseDayChart({
         {bloodPoints.map((p, i) => (
           <circle
             key={`b-${i}`}
-            cx={xForTime(p.timestamp)}
+            cx={xForTime(p.timestamp, timeZone)}
             cy={yForValue(p.mgdl)}
             r={4}
             fill="var(--color-danger)"
             stroke="var(--color-surface)"
             strokeWidth={2}
           >
-            <title>{`🩸 ${Math.round(p.mgdl)} mg/dL — ${p.timestamp.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit" })}`}</title>
+            <title>{`🩸 ${Math.round(p.mgdl)} mg/dL — ${p.timestamp.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit", timeZone })}`}</title>
           </circle>
         ))}
         {cgmPoints.map((p, i) => (
           <circle
             key={`c-${i}`}
-            cx={xForTime(p.timestamp)}
+            cx={xForTime(p.timestamp, timeZone)}
             cy={yForValue(p.mgdl)}
             r={4}
             fill="var(--color-primary)"
             stroke="var(--color-surface)"
             strokeWidth={2}
           >
-            <title>{`📡 ${Math.round(p.mgdl)} mg/dL — ${p.timestamp.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit" })}`}</title>
+            <title>{`📡 ${Math.round(p.mgdl)} mg/dL — ${p.timestamp.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit", timeZone })}`}</title>
           </circle>
         ))}
 

@@ -1,5 +1,6 @@
 import { prisma } from "../../../src/lib/prisma";
 import { requireSession } from "../../../src/lib/auth-guard";
+import { getUserTimeZone } from "../../../src/lib/timezone";
 import RegistrarComidaForm from "./RegistrarComidaForm";
 
 const TIPO_LABELS: Record<string, string> = {
@@ -12,6 +13,7 @@ const TIPO_LABELS: Record<string, string> = {
 
 export default async function ComidasPage() {
   const session = await requireSession();
+  const timeZone = await getUserTimeZone();
   const meals = await prisma.meal.findMany({
     where: { userId: session.userId },
     orderBy: { timestamp: "desc" },
@@ -35,7 +37,7 @@ export default async function ComidasPage() {
               <span>{TIPO_LABELS[m.mealType] ?? m.mealType}</span>
               <span className="event-value">{m.carbsGDirect} g</span>
               <span className="event-time">
-                {new Date(m.timestamp).toLocaleString("es-CR")}
+                {new Date(m.timestamp).toLocaleString("es-CR", { timeZone })}
               </span>
             </li>
           ))}

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getSession } from "../../src/lib/session";
 import { prisma } from "../../src/lib/prisma";
 import LogoutButton from "./LogoutButton";
+import TimezoneSync from "./TimezoneSync";
 
 const NAV_ITEMS = [
   { href: "/hoy", label: "🏠 Hoy" },
@@ -27,6 +28,7 @@ export default async function MainLayout({
 
   return (
     <div className="app-shell">
+      <TimezoneSync />
       <header className="app-header">
         <span className="app-title">Stay Alive ILU</span>
         <div className="app-header-right">

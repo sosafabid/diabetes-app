@@ -1,5 +1,6 @@
 import { prisma } from "../../../src/lib/prisma";
 import { requireSession } from "../../../src/lib/auth-guard";
+import { getUserTimeZone } from "../../../src/lib/timezone";
 import RegistrarBienestarForm from "./RegistrarBienestarForm";
 
 const LABELS: Record<string, { emoji: string; label: string }> = {
@@ -10,6 +11,7 @@ const LABELS: Record<string, { emoji: string; label: string }> = {
 
 export default async function BienestarPage() {
   const session = await requireSession();
+  const timeZone = await getUserTimeZone();
   const events = await prisma.contextEvent.findMany({
     where: { userId: session.userId },
     orderBy: { timestamp: "desc" },
@@ -42,7 +44,7 @@ export default async function BienestarPage() {
               </span>
               {ev.notes && <span>{ev.notes}</span>}
               <span className="event-time">
-                {new Date(ev.timestamp).toLocaleString("es-CR")}
+                {new Date(ev.timestamp).toLocaleString("es-CR", { timeZone })}
               </span>
             </li>
           ))}
