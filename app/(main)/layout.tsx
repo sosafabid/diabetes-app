@@ -27,7 +27,7 @@ export default async function MainLayout({
   return (
     <div className="app-shell">
       <header className="app-header">
-        <span className="app-title">Acompañante de diabetes</span>
+        <span className="app-title">Stay Alive ILU</span>
         <div className="app-header-right">
           {user && <span className="app-user">{user.name}</span>}
           <LogoutButton />

@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Acompañante de gestión de diabetes",
+  title: "Stay Alive ILU Bitch",
   description: "MVP — acompañante personal de gestión de diabetes",
 };
 

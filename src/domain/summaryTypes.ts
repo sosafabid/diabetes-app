@@ -4,7 +4,7 @@
 // tipos simplificados antes de pasarlos al motor.
 // ============================================================================
 
-export type PeriodType = "7d" | "14d" | "30d" | "month" | "custom";
+export type PeriodType = "day" | "7d" | "14d" | "30d" | "month" | "custom";
 
 export interface Period {
   type: PeriodType;

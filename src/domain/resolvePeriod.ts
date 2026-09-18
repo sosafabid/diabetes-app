@@ -27,6 +27,11 @@ export function resolvePeriod(
   end.setHours(23, 59, 59, 999);
 
   switch (type) {
+    case "day": {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      return { type, start, end };
+    }
     case "7d": {
       const start = new Date(now);
       start.setDate(start.getDate() - 6);
