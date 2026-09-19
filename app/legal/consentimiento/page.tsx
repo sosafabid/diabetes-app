@@ -55,9 +55,10 @@ export default function ConsentimientoPage() {
 
         <h2>Tus derechos</h2>
         <p>
-          Puedes pedir la exportación o eliminación de todos tus datos en
-          cualquier momento contactando al equipo de la app. Eliminar tu
-          cuenta borra tu historial de forma permanente.
+          Puedes exportar tu resumen a PDF desde la app cuando quieras. Puedes
+          eliminar tu cuenta y todo tu historial de forma permanente,
+          directamente desde Ajustes y privacidad dentro de la app — no
+          hace falta contactar a nadie.
         </p>
 
         <p style={{ marginTop: "1.5rem" }}>
