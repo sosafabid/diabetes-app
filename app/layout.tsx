@@ -1,8 +1,8 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Stay Alive ILU Babe",
-  description: "MVP — acompañante personal de gestión de diabetes",
+  title: "Stay Alive ILU",
+  description: "Tu diabetes, tu historia — registra, entiende, avanza.",
 };
 
 export default function RootLayout({

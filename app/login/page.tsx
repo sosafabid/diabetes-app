@@ -38,6 +38,7 @@ export default function LoginPage() {
   return (
     <main className="auth-page">
       <form onSubmit={handleSubmit} className="auth-form">
+        <img src="/logo.png" alt="Stay Alive ILU" className="auth-logo" />
         <h1>Iniciar sesión</h1>
         <label>
           Correo electrónico

@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 
-const PUBLIC_PATHS = ["/login", "/registro"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/registro",
+  "/olvide-contrasena",
+  "/restablecer-contrasena",
+  "/legal/consentimiento",
+];
 const PUBLIC_API_PREFIXES = ["/api/auth/", "/api/health"];
 
 function getSecretKey() {

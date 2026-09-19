@@ -44,6 +44,7 @@ export default function RegistroPage() {
   return (
     <main className="auth-page">
       <form onSubmit={handleSubmit} className="auth-form">
+        <img src="/logo.png" alt="Stay Alive ILU" className="auth-logo" />
         <h1>Crear cuenta</h1>
         <label>
           Nombre

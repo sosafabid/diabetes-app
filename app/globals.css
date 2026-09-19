@@ -48,6 +48,14 @@ a {
   gap: 1rem;
 }
 
+.auth-logo {
+  width: 72px;
+  height: 72px;
+  display: block;
+  margin: 0 auto 0.5rem;
+  border-radius: 16px;
+}
+
 .auth-form label {
   display: flex;
   flex-direction: column;
@@ -70,6 +78,18 @@ a {
   padding: 0.75rem 1.25rem;
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.app-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
 }
 
 .app-title {

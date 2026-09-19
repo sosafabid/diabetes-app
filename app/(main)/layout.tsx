@@ -30,7 +30,10 @@ export default async function MainLayout({
     <div className="app-shell">
       <TimezoneSync />
       <header className="app-header">
-        <span className="app-title">Stay Alive ILU</span>
+        <div className="app-brand">
+          <img src="/logo.png" alt="Stay Alive ILU" className="app-logo" />
+          <span className="app-title">Stay Alive ILU</span>
+        </div>
         <div className="app-header-right">
           {user && <span className="app-user">{user.name}</span>}
           <LogoutButton />
