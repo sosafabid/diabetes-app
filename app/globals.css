@@ -619,3 +619,79 @@ textarea {
   padding: 0.3rem 0.7rem;
   font-size: 0.85rem;
 }
+
+/* ---- Vista de exportación a PDF (/resumen/exportar) ---- */
+.print-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.print-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.print-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid var(--color-border);
+}
+
+.print-header img {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+}
+
+.print-header h1 {
+  margin: 0 0 0.2rem;
+  font-size: 1.3rem;
+}
+
+.print-header p {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.print-page section {
+  margin-bottom: 1.5rem;
+}
+
+.print-page h2 {
+  font-size: 1.05rem;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 0.3rem;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .app-shell,
+  .app-header,
+  .app-nav {
+    display: none !important;
+  }
+  body {
+    background: white;
+  }
+  .print-page {
+    max-width: none;
+    padding: 0;
+  }
+  .summary-section,
+  .card,
+  .hero-stat {
+    break-inside: avoid;
+  }
+}

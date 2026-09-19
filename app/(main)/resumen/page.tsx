@@ -1,85 +1,13 @@
-import { prisma } from "../../../src/lib/prisma";
+import Link from "next/link";
 import { requireSession } from "../../../src/lib/auth-guard";
-import { SummaryEngine } from "../../../src/domain/SummaryEngine";
-import { PatternEngine } from "../../../src/domain/PatternEngine";
-import type { PeriodType } from "../../../src/domain/summaryTypes";
+import { getUserTimeZone } from "../../../src/lib/timezone";
+import { getResumenData, MEAL_TYPE_LABELS, EXERCISE_TYPE_LABELS } from "./getResumenData";
 import PeriodSelector from "./PeriodSelector";
 import PatternCard from "./PatternCard";
 import StatBar from "./StatBar";
 import GlucoseRangeBar from "./GlucoseRangeBar";
 import GlucoseDayChart from "../charts/GlucoseDayChart";
 import GlucoseTrendLineChart from "../charts/GlucoseTrendLineChart";
-import {
-  getUserTimeZone,
-  zonedStartOfDay,
-  zonedEndOfDay,
-  zonedAddDays,
-  zonedMonthRange,
-  parseYMDInTZ,
-  formatYMDInTZ,
-} from "../../../src/lib/timezone";
-
-// Un solo período controla TODO en esta página: las tarjetas de resumen,
-// la distribución de glucosa, insulina/comidas/actividad, y el gráfico de
-// tendencia — ya no hay un selector separado para el gráfico.
-const VALID_PERIODS = ["day", "7d", "14d", "30d", "month", "3m", "6m", "custom"];
-
-const MEAL_TYPE_LABELS: Record<string, string> = {
-  BREAKFAST: "Desayuno",
-  LUNCH: "Almuerzo",
-  DINNER: "Cena",
-  SNACK: "Merienda",
-  OTHER: "Otra",
-};
-
-const EXERCISE_TYPE_LABELS: Record<string, string> = {
-  WALKING: "Caminata",
-  RUNNING: "Carrera",
-  CYCLING: "Ciclismo",
-  WEIGHTS: "Pesas",
-  HIIT: "HIIT",
-  SWIMMING: "Natación",
-  SPORT: "Deporte",
-  OTHER: "Otra",
-};
-
-function computeRange(
-  periodType: string,
-  timeZone: string,
-  opts: { day?: string; from?: string; to?: string },
-): { start: Date; end: Date; error: string | null } {
-  const now = new Date();
-
-  if (periodType === "day") {
-    const base = opts.day ? parseYMDInTZ(opts.day, timeZone) : now;
-    return { start: zonedStartOfDay(base, timeZone), end: zonedEndOfDay(base, timeZone), error: null };
-  }
-  if (periodType === "month") {
-    const range = zonedMonthRange(now, timeZone);
-    return { ...range, error: null };
-  }
-  if (periodType === "custom") {
-    if (!opts.from || !opts.to) {
-      return {
-        start: zonedStartOfDay(zonedAddDays(now, -6, timeZone), timeZone),
-        end: zonedEndOfDay(now, timeZone),
-        error: "Selecciona una fecha de inicio y fin para el período personalizado.",
-      };
-    }
-    return {
-      start: zonedStartOfDay(parseYMDInTZ(opts.from, timeZone), timeZone),
-      end: zonedEndOfDay(parseYMDInTZ(opts.to, timeZone), timeZone),
-      error: null,
-    };
-  }
-  const daysBack: Record<string, number> = { "7d": 6, "14d": 13, "30d": 29, "3m": 89, "6m": 179 };
-  const back = daysBack[periodType] ?? 6;
-  return {
-    start: zonedStartOfDay(zonedAddDays(now, -back, timeZone), timeZone),
-    end: zonedEndOfDay(now, timeZone),
-    error: null,
-  };
-}
 
 export default async function ResumenPage({
   searchParams,
@@ -88,119 +16,52 @@ export default async function ResumenPage({
 }) {
   const session = await requireSession();
   const timeZone = await getUserTimeZone();
+  const data = await getResumenData(session.userId, timeZone, searchParams);
+  const {
+    periodType,
+    start,
+    end,
+    periodError,
+    selectedDayStr,
+    plan,
+    summary,
+    patterns,
+    maxInsulin,
+    maxMealType,
+    minutesByActivityType,
+    maxActivityMinutes,
+    glucosePoints,
+    insulinEvents,
+    meals,
+    exerciseEvents,
+    contextEvents,
+  } = data;
 
-  const periodType = VALID_PERIODS.includes(searchParams.period ?? "")
-    ? (searchParams.period as string)
-    : "7d";
-
-  const { start, end, error: periodError } = computeRange(periodType, timeZone, {
-    day: searchParams.day,
-    from: searchParams.from,
-    to: searchParams.to,
-  });
-
-  const selectedDayStr = searchParams.day ?? formatYMDInTZ(new Date(), timeZone);
-
-  const [glucoseReadings, insulinEvents, meals, exerciseEvents, hypoglycemiaEvents, plan, contextEvents] =
-    await Promise.all([
-      prisma.glucoseReading.findMany({
-        where: { userId: session.userId, timestamp: { gte: start, lte: end } },
-      }),
-      prisma.insulinEvent.findMany({
-        where: { userId: session.userId, timestamp: { gte: start, lte: end } },
-        include: { insulinRegimen: true },
-      }),
-      prisma.meal.findMany({
-        where: { userId: session.userId, timestamp: { gte: start, lte: end } },
-      }),
-      prisma.exerciseEvent.findMany({
-        where: { userId: session.userId, timestamp: { gte: start, lte: end } },
-      }),
-      prisma.hypoglycemiaEvent.findMany({
-        where: { userId: session.userId, createdAt: { gte: start, lte: end } },
-      }),
-      prisma.hypoglycemiaPlan.findFirst({
-        where: { userId: session.userId, effectiveTo: null },
-        orderBy: { effectiveFrom: "desc" },
-      }),
-      prisma.contextEvent.findMany({
-        where: { userId: session.userId, timestamp: { gte: start, lte: end }, reportedStress: { not: null } },
-      }),
-    ]);
-
-  const engine = new SummaryEngine();
-  const summary = engine.compute({
-    // El motor solo usa start/end para los cálculos; "type" es informativo.
-    period: { type: periodType as unknown as PeriodType, start, end },
-    lowThresholdMgdl: plan?.lowThreshold,
-    glucoseReadings: glucoseReadings.map((r) => ({
-      timestamp: r.timestamp,
-      value: r.glucoseValue,
-      unit: r.unit,
-      source: r.measurementSource,
-    })),
-    insulinEvents: insulinEvents.map((e) => ({
-      timestamp: e.timestamp,
-      dose: e.dose,
-      insulinName: e.insulinRegimen.insulinName,
-      purpose: e.purpose,
-    })),
-    meals: meals.map((m) => ({
-      timestamp: m.timestamp,
-      mealType: m.mealType,
-      carbsG: m.carbsGDirect,
-    })),
-    exerciseEvents: exerciseEvents.map((e) => ({
-      timestamp: e.timestamp,
-      type: e.type,
-      duration: e.duration,
-    })),
-    hypoglycemiaEvents: hypoglycemiaEvents.map((e) => ({
-      createdAt: e.createdAt,
-      status: e.status,
-      carbsConsumedG: e.carbsConsumedG,
-    })),
-  });
-
-  const patternEngine = new PatternEngine();
-  const patterns = patternEngine.compute({
-    glucoseReadings: glucoseReadings.map((r) => ({
-      timestamp: r.timestamp,
-      value: r.glucoseValue,
-      unit: r.unit,
-      source: r.measurementSource,
-    })),
-    exerciseEvents: exerciseEvents.map((e) => ({ timestamp: e.timestamp })),
-    meals: meals.map((m) => ({ timestamp: m.timestamp, carbsG: m.carbsGDirect })),
-    insulinEvents: insulinEvents.map((e) => ({ timestamp: e.timestamp, dose: e.dose })),
-    contextEvents: contextEvents.map((c) => ({
-      timestamp: c.timestamp,
-      sleepHours: c.sleepHours,
-      isMenstruating: c.isMenstruating,
-    })),
-  });
-
-  const maxInsulin = Math.max(0, ...Object.values(summary.insulin.byInsulinName));
-  const maxMealType = Math.max(0, ...Object.values(summary.meals.byMealType));
-  const minutesByActivityType = exerciseEvents.reduce<Record<string, number>>((acc, e) => {
-    acc[e.type] = (acc[e.type] ?? 0) + e.duration;
-    return acc;
-  }, {});
-  const maxActivityMinutes = Math.max(1, ...Object.values(minutesByActivityType));
-
-  const glucosePoints = glucoseReadings.map((r) => ({
-    timestamp: r.timestamp,
-    value: r.glucoseValue,
-    unit: r.unit,
-    source: r.measurementSource,
-  }));
+  // El link de exportar lleva el mismo período que se está viendo ahora.
+  const exportParams = new URLSearchParams();
+  exportParams.set("period", periodType);
+  if (searchParams.day) exportParams.set("day", searchParams.day);
+  if (searchParams.from) exportParams.set("from", searchParams.from);
+  if (searchParams.to) exportParams.set("to", searchParams.to);
 
   return (
     <div className="page">
-      <h1>Resumen</h1>
-      <p className="page-subtitle">
-        {start.toLocaleDateString("es-CR", { timeZone })} – {end.toLocaleDateString("es-CR", { timeZone })}
-      </p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <h1>Resumen</h1>
+          <p className="page-subtitle">
+            {start.toLocaleDateString("es-CR", { timeZone })} – {end.toLocaleDateString("es-CR", { timeZone })}
+          </p>
+        </div>
+        <Link
+          href={`/resumen/exportar?${exportParams.toString()}`}
+          target="_blank"
+          className="secondary-button"
+          style={{ textDecoration: "none", whiteSpace: "nowrap" }}
+        >
+          📄 Exportar a PDF
+        </Link>
+      </div>
 
       <PeriodSelector
         currentPeriod={periodType}
@@ -380,8 +241,8 @@ export default async function ResumenPage({
       <p className="form-hint">
         Estos números son objetivos, calculados directamente de tus registros
         — no interpretan causas ni recomiendan cambios de tratamiento. El
-        análisis con IA (para preparar preguntas para tu equipo médico) y la
-        exportación a PDF/CSV/JSON llegan en las siguientes fases.
+        análisis con IA (para preparar preguntas para tu equipo médico)
+        llega en una próxima fase.
       </p>
     </div>
   );

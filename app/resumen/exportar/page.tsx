@@ -1,0 +1,203 @@
+import { requireSession } from "../../../src/lib/auth-guard";
+import { getUserTimeZone } from "../../../src/lib/timezone";
+import { prisma } from "../../../src/lib/prisma";
+import {
+  getResumenData,
+  MEAL_TYPE_LABELS,
+  EXERCISE_TYPE_LABELS,
+} from "../../(main)/resumen/getResumenData";
+import GlucoseDayChart from "../../(main)/charts/GlucoseDayChart";
+import GlucoseTrendLineChart from "../../(main)/charts/GlucoseTrendLineChart";
+import ExportPrintButton from "./ExportPrintButton";
+
+export const metadata = {
+  title: "Resumen — Stay Alive ILU",
+};
+
+export default async function ExportarResumenPage({
+  searchParams,
+}: {
+  searchParams: { period?: string; day?: string; from?: string; to?: string };
+}) {
+  const session = await requireSession();
+  const timeZone = await getUserTimeZone();
+  const user = await prisma.user.findUnique({ where: { id: session.userId } });
+  const data = await getResumenData(session.userId, timeZone, searchParams);
+  const {
+    periodType,
+    start,
+    end,
+    plan,
+    summary,
+    patterns,
+    minutesByActivityType,
+    glucosePoints,
+    insulinEvents,
+    meals,
+    exerciseEvents,
+    contextEvents,
+  } = data;
+
+  return (
+    <div className="print-page">
+      <div className="print-toolbar no-print">
+        <ExportPrintButton />
+        <p className="form-hint" style={{ margin: 0 }}>
+          Se abrirá el diálogo de impresión de tu navegador — elige
+          "Guardar como PDF" como destino.
+        </p>
+      </div>
+
+      <header className="print-header">
+        <img src="/logo.png" alt="Stay Alive ILU" />
+        <div>
+          <h1>Stay Alive ILU — Resumen</h1>
+          <p>
+            {user?.name} — {start.toLocaleDateString("es-CR", { timeZone })} al{" "}
+            {end.toLocaleDateString("es-CR", { timeZone })}
+          </p>
+        </div>
+      </header>
+
+          <section>
+            <h2>Resumen general</h2>
+            <div className="hero-stats">
+              <div className="hero-stat">
+                <span className="hero-stat-value">{summary.glucose.combined.average ?? "—"}</span>
+                <span className="hero-stat-label">mg/dL promedio</span>
+              </div>
+              <div className="hero-stat">
+                <span className="hero-stat-value">{summary.insulin.totalUnits}</span>
+                <span className="hero-stat-label">U de insulina</span>
+              </div>
+              <div className="hero-stat">
+                <span className="hero-stat-value">{summary.meals.totalCarbsG}</span>
+                <span className="hero-stat-label">g de carbohidratos</span>
+              </div>
+              <div className="hero-stat hero-stat-warning">
+                <span className="hero-stat-value">{summary.hypoglycemia.episodeCount}</span>
+                <span className="hero-stat-label">episodios de hipoglucemia</span>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2>Tendencia de glucosa</h2>
+            {periodType === "day" ? (
+              <GlucoseDayChart
+                glucoseReadings={glucosePoints}
+                insulinEvents={insulinEvents.map((e) => ({ timestamp: e.timestamp }))}
+                mealEvents={meals.map((m) => ({ timestamp: m.timestamp }))}
+                activityEvents={exerciseEvents.map((e) => ({ timestamp: e.timestamp }))}
+                stressEvents={contextEvents.map((c) => ({ timestamp: c.timestamp }))}
+                lowThreshold={plan?.lowThreshold}
+                timeZone={timeZone}
+              />
+            ) : (
+              <GlucoseTrendLineChart
+                glucoseReadings={glucosePoints}
+                rangeStart={start}
+                rangeEnd={end}
+                lowThreshold={plan?.lowThreshold}
+              />
+            )}
+          </section>
+
+          <section>
+            <h2>Distribución de glucosa</h2>
+            <p>
+              Sangre: {summary.glucose.bySource.BLOOD.count} lecturas — bajo{" "}
+              {summary.glucose.bySource.BLOOD.lowCount}, alto {summary.glucose.bySource.BLOOD.highCount}
+            </p>
+            <p>
+              CGM: {summary.glucose.bySource.CGM.count} lecturas — bajo{" "}
+              {summary.glucose.bySource.CGM.lowCount}, alto {summary.glucose.bySource.CGM.highCount}
+            </p>
+          </section>
+
+          {Object.keys(summary.insulin.byInsulinName).length > 0 && (
+            <section>
+              <h2>Insulina por tipo</h2>
+              <ul>
+                {Object.entries(summary.insulin.byInsulinName).map(([name, units]) => (
+                  <li key={name}>
+                    {name}: {units} U
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {summary.meals.count > 0 && (
+            <section>
+              <h2>Comidas por tipo</h2>
+              <ul>
+                {Object.entries(summary.meals.byMealType).map(([type, count]) => (
+                  <li key={type}>
+                    {MEAL_TYPE_LABELS[type] ?? type}: {count}
+                  </li>
+                ))}
+              </ul>
+              {summary.meals.averageCarbsG != null && (
+                <p>Promedio de {summary.meals.averageCarbsG} g de carbohidratos por comida.</p>
+              )}
+            </section>
+          )}
+
+          {summary.activity.sessionCount > 0 && (
+            <section>
+              <h2>Actividad por tipo</h2>
+              <ul>
+                {Object.entries(minutesByActivityType).map(([type, minutes]) => (
+                  <li key={type}>
+                    {EXERCISE_TYPE_LABELS[type] ?? type}: {minutes} min
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          <section>
+            <h2>Hipoglucemias</h2>
+            {summary.hypoglycemia.episodeCount === 0 ? (
+              <p>Sin episodios registrados en este período.</p>
+            ) : (
+              <ul>
+                <li>{summary.hypoglycemia.episodeCount} episodios en total</li>
+                <li>Tratadas con carbohidratos: {summary.hypoglycemia.treatedCount}</li>
+                <li>Marcadas como severas: {summary.hypoglycemia.severeCount}</li>
+                {summary.hypoglycemia.averageCarbsConsumedG != null && (
+                  <li>
+                    Promedio de carbohidratos usados para tratarlas:{" "}
+                    {summary.hypoglycemia.averageCarbsConsumedG} g
+                  </li>
+                )}
+              </ul>
+            )}
+          </section>
+
+          <section>
+            <h2>Patrones</h2>
+            <p className="form-hint">
+              Comparaciones directas entre los registros del período — no
+              interpretan causas ni son consejo médico.
+            </p>
+            {patterns.map((p) => (
+              <div key={p.id} style={{ marginBottom: "0.85rem" }}>
+                <h3>
+                  {p.emoji} {p.titleEs}
+                </h3>
+                {p.available ? <p>{p.summaryEs}</p> : <p className="form-hint">{p.insufficientMessageEs}</p>}
+              </div>
+            ))}
+          </section>
+
+          <p className="form-hint">
+            Estos números son objetivos, calculados directamente de los
+            registros del período — no interpretan causas ni recomiendan
+            cambios de tratamiento. No sustituyen el criterio de un equipo
+            médico.
+          </p>
+    </div>
+  );
+}
