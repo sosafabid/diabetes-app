@@ -374,6 +374,7 @@ model ContextEvent {
   reportedStress    StressLevel?
   sleepHours        Float?
   sleepQuality      SleepQuality?
+  isMenstruating    Boolean?
   illnessReported   Boolean  @default(false)
   unusualSituation  UnusualSituation?
   notes             String?
@@ -536,7 +537,7 @@ model HypoglycemiaEvent {
   userId               String
   user                 User     @relation(fields: [userId], references: [id])
 
-  glucoseReadingId     String @unique
+  glucoseReadingId     String   @unique
   glucoseReading       GlucoseReading @relation("TriggeringReading", fields: [glucoseReadingId], references: [id])
 
   hypoglycemiaPlanId   String?

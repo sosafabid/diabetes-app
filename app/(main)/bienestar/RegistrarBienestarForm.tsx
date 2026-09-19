@@ -12,6 +12,8 @@ const OPCIONES = [
 export default function RegistrarBienestarForm() {
   const router = useRouter();
   const [reportedStress, setReportedStress] = useState<string | null>(null);
+  const [sleepHours, setSleepHours] = useState("");
+  const [isMenstruating, setIsMenstruating] = useState(false);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -28,7 +30,12 @@ export default function RegistrarBienestarForm() {
       const res = await fetch("/api/bienestar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reportedStress, notes: notes || undefined }),
+        body: JSON.stringify({
+          reportedStress,
+          sleepHours: sleepHours ? Number(sleepHours) : undefined,
+          isMenstruating: isMenstruating || undefined,
+          notes: notes || undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -36,6 +43,8 @@ export default function RegistrarBienestarForm() {
         return;
       }
       setReportedStress(null);
+      setSleepHours("");
+      setIsMenstruating(false);
       setNotes("");
       router.refresh();
     } catch {
@@ -61,6 +70,26 @@ export default function RegistrarBienestarForm() {
           </button>
         ))}
       </div>
+      <label>
+        Horas de sueño anoche (opcional)
+        <input
+          type="number"
+          step="0.5"
+          min="0"
+          max="24"
+          placeholder="p. ej. 6.5"
+          value={sleepHours}
+          onChange={(e) => setSleepHours(e.target.value)}
+        />
+      </label>
+      <label className="checkbox-label">
+        <input
+          type="checkbox"
+          checked={isMenstruating}
+          onChange={(e) => setIsMenstruating(e.target.checked)}
+        />
+        Hoy estoy en período menstrual (opcional)
+      </label>
       <label>
         Nota (opcional)
         <input

@@ -1,8 +1,10 @@
 import { prisma } from "../../../src/lib/prisma";
 import { requireSession } from "../../../src/lib/auth-guard";
 import { SummaryEngine } from "../../../src/domain/SummaryEngine";
+import { PatternEngine } from "../../../src/domain/PatternEngine";
 import type { PeriodType } from "../../../src/domain/summaryTypes";
 import PeriodSelector from "./PeriodSelector";
+import PatternCard from "./PatternCard";
 import StatBar from "./StatBar";
 import GlucoseRangeBar from "./GlucoseRangeBar";
 import GlucoseDayChart from "../charts/GlucoseDayChart";
@@ -160,6 +162,24 @@ export default async function ResumenPage({
     })),
   });
 
+  const patternEngine = new PatternEngine();
+  const patterns = patternEngine.compute({
+    glucoseReadings: glucoseReadings.map((r) => ({
+      timestamp: r.timestamp,
+      value: r.glucoseValue,
+      unit: r.unit,
+      source: r.measurementSource,
+    })),
+    exerciseEvents: exerciseEvents.map((e) => ({ timestamp: e.timestamp })),
+    meals: meals.map((m) => ({ timestamp: m.timestamp, carbsG: m.carbsGDirect })),
+    insulinEvents: insulinEvents.map((e) => ({ timestamp: e.timestamp, dose: e.dose })),
+    contextEvents: contextEvents.map((c) => ({
+      timestamp: c.timestamp,
+      sleepHours: c.sleepHours,
+      isMenstruating: c.isMenstruating,
+    })),
+  });
+
   const maxInsulin = Math.max(0, ...Object.values(summary.insulin.byInsulinName));
   const maxMealType = Math.max(0, ...Object.values(summary.meals.byMealType));
   const minutesByActivityType = exerciseEvents.reduce<Record<string, number>>((acc, e) => {
@@ -241,6 +261,20 @@ export default async function ResumenPage({
             lowThreshold={plan?.lowThreshold}
           />
         )}
+      </section>
+
+      {/* Patrones — comparaciones descriptivas de tus propios datos, sin
+          interpretar causas ni dar recomendaciones de tratamiento */}
+      <section className="summary-section">
+        <h2>🔍 Patrones</h2>
+        <p className="form-hint" style={{ marginBottom: "1rem" }}>
+          Comparaciones directas entre tus registros — no interpretan causas
+          ni son consejo médico. Úsalas para conversar con tu equipo de
+          salud si te parecen útiles.
+        </p>
+        {patterns.map((p) => (
+          <PatternCard key={p.id} pattern={p} />
+        ))}
       </section>
 
       {/* Distribución de glucosa — nunca mezcla sangre y CGM */}

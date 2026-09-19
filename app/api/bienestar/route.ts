@@ -17,7 +17,12 @@ export async function GET() {
 export async function POST(request: Request) {
   const session = await requireSession();
 
-  let body: { reportedStress?: string; notes?: string };
+  let body: {
+    reportedStress?: string;
+    notes?: string;
+    sleepHours?: number;
+    isMenstruating?: boolean;
+  };
   try {
     body = await request.json();
   } catch {
@@ -31,10 +36,19 @@ export async function POST(request: Request) {
     );
   }
 
+  if (
+    body.sleepHours != null &&
+    (typeof body.sleepHours !== "number" || body.sleepHours < 0 || body.sleepHours > 24)
+  ) {
+    return NextResponse.json({ error: "Horas de sueño inválidas." }, { status: 400 });
+  }
+
   const event = await prisma.contextEvent.create({
     data: {
       userId: session.userId,
       reportedStress: body.reportedStress as never,
+      sleepHours: body.sleepHours ?? undefined,
+      isMenstruating: body.isMenstruating ?? undefined,
       notes: body.notes || undefined,
       timestamp: new Date(),
     },
