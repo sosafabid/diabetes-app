@@ -51,5 +51,11 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Excluye assets de Next.js Y cualquier archivo estático en /public
+  // (imágenes, íconos, etc.) — si no, el middleware los trata como rutas
+  // protegidas y los redirige a /login cuando no hay sesión, rompiendo
+  // cosas como el logo en la propia pantalla de login.
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|svg|gif|webp|ico)$).*)",
+  ],
 };
