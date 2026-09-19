@@ -42,6 +42,7 @@ model User {
   diabetesType      DiabetesType?
   timezone          String   @default("America/Costa_Rica")
   notificationPrefs Json?    // preferencias de notificación
+  consentAcceptedAt DateTime? // aceptación del aviso de privacidad/consentimiento al registrarse
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -59,6 +60,24 @@ model User {
   auditLogs         AuditLog[]
   hypoglycemiaPlans  HypoglycemiaPlan[]
   hypoglycemiaEvents HypoglycemiaEvent[]
+  passwordResetTokens PasswordResetToken[]
+}
+
+// ----------------------------------------------------------------------------
+// RECUPERACIÓN DE CONTRASEÑA
+// ----------------------------------------------------------------------------
+// Solo se guarda el HASH del token (nunca el token en texto plano) — igual
+// que con las contraseñas. El token real solo existe en el link del correo.
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
 }
 
 enum GlucoseUnit {

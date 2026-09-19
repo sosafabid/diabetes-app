@@ -4,7 +4,7 @@ import { prisma } from "../../../../src/lib/prisma";
 import { createSessionCookie } from "../../../../src/lib/session";
 
 export async function POST(request: Request) {
-  let body: { email?: string; password?: string; name?: string };
+  let body: { email?: string; password?: string; name?: string; consentAccepted?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -30,6 +30,12 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  if (body.consentAccepted !== true) {
+    return NextResponse.json(
+      { error: "Debes aceptar el manejo de datos y consentimiento para crear tu cuenta." },
+      { status: 400 },
+    );
+  }
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
@@ -42,7 +48,7 @@ export async function POST(request: Request) {
   const passwordHash = await bcrypt.hash(password, 12);
 
   const user = await prisma.user.create({
-    data: { email, name, passwordHash },
+    data: { email, name, passwordHash, consentAcceptedAt: new Date() },
   });
 
   await prisma.auditLog.create({

@@ -165,7 +165,7 @@ export default function GlucoseTrendLineChart({
                 stroke="var(--color-border)"
                 strokeWidth={1}
               />
-              <text x={2} y={y + 4} fontSize="11" fill="var(--color-text-muted)">
+              <text x={2} y={y + 4} fontSize="13" fill="var(--color-text-muted)">
                 {value}
               </text>
             </g>
@@ -173,18 +173,18 @@ export default function GlucoseTrendLineChart({
         })}
 
         {bloodDaily.length > 0 && (
-          <path d={pathFor(bloodDaily)} fill="none" stroke="var(--color-danger)" strokeWidth={2} />
+          <path d={pathFor(bloodDaily)} fill="none" stroke="var(--color-danger)" strokeWidth={3} />
         )}
         {cgmDaily.length > 0 && (
-          <path d={pathFor(cgmDaily)} fill="none" stroke="var(--color-primary)" strokeWidth={2} />
+          <path d={pathFor(cgmDaily)} fill="none" stroke="var(--color-primary)" strokeWidth={3} />
         )}
         {bloodDaily.map((d, i) => (
-          <circle key={`b-${i}`} cx={xForDate(d.date)} cy={yForValue(d.average)} r={2.5} fill="var(--color-danger)">
+          <circle key={`b-${i}`} cx={xForDate(d.date)} cy={yForValue(d.average)} r={4} fill="var(--color-danger)">
             <title>{`🩸 Promedio ${Math.round(d.average)} mg/dL — ${d.date.toLocaleDateString("es-CR")}`}</title>
           </circle>
         ))}
         {cgmDaily.map((d, i) => (
-          <circle key={`c-${i}`} cx={xForDate(d.date)} cy={yForValue(d.average)} r={2.5} fill="var(--color-primary)">
+          <circle key={`c-${i}`} cx={xForDate(d.date)} cy={yForValue(d.average)} r={4} fill="var(--color-primary)">
             <title>{`📡 Promedio ${Math.round(d.average)} mg/dL — ${d.date.toLocaleDateString("es-CR")}`}</title>
           </circle>
         ))}
@@ -194,7 +194,7 @@ export default function GlucoseTrendLineChart({
             key={i}
             x={xForDate(t)}
             y={HEIGHT - 8}
-            fontSize="9"
+            fontSize="11"
             fill="var(--color-text-muted)"
             textAnchor={i === 0 ? "start" : i === ticks.length - 1 ? "end" : "middle"}
           >

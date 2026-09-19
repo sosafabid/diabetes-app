@@ -9,18 +9,23 @@ export default function RegistroPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [consentAccepted, setConsentAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!consentAccepted) {
+      setError("Debes aceptar el manejo de datos y consentimiento para continuar.");
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch("/api/auth/registro", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({ name, email, password, consentAccepted }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -70,6 +75,17 @@ export default function RegistroPage() {
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="new-password"
           />
+        </label>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={consentAccepted}
+            onChange={(e) => setConsentAccepted(e.target.checked)}
+          />
+          He leído y acepto el{" "}
+          <a href="/legal/consentimiento" target="_blank" rel="noopener noreferrer">
+            manejo de datos y consentimiento
+          </a>
         </label>
         {error && <p className="form-error">{error}</p>}
         <button type="submit" disabled={loading}>
