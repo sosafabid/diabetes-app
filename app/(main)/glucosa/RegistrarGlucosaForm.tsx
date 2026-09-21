@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { updateGlucoseReminders } from "./glucoseReminders";
 
 const CONTEXTOS = [
   { value: "", label: "Sin especificar" },
@@ -23,7 +24,13 @@ const TENDENCIAS = [
   { value: "FALLING_FAST", label: "↘↘ Bajando rápidamente" },
 ];
 
-export default function RegistrarGlucosaForm() {
+export default function RegistrarGlucosaForm({
+  lowThreshold,
+  highThreshold,
+}: {
+  lowThreshold: number;
+  highThreshold: number;
+}) {
   const router = useRouter();
   const [value, setValue] = useState("");
   const [source, setSource] = useState<"BLOOD" | "CGM" | "">("");
@@ -59,6 +66,10 @@ export default function RegistrarGlucosaForm() {
         setError(data.error ?? "No se pudo guardar la lectura.");
         return;
       }
+      // Silencioso a propósito: en la web (sin Capacitor) esto no hace
+      // nada; en la app nativa programa/cancela los recordatorios de
+      // re-medición. Nunca debe bloquear ni fallar el guardado en sí.
+      updateGlucoseReminders(Number(value), lowThreshold, highThreshold).catch(() => {});
       setValue("");
       setSource("");
       setTrend("");
