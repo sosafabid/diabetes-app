@@ -10,9 +10,14 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate dev",
+    "cap:sync": "cap sync"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/ios": "^8.5.2",
+    "@capacitor/local-notifications": "^8.3.1",
     "@prisma/client": "^5.19.1",
     "bcryptjs": "^2.4.3",
     "jose": "^5.9.6",
@@ -21,6 +26,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.2",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.16.11",
     "@types/react": "^18.3.11",
