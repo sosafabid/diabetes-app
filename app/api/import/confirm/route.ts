@@ -95,7 +95,7 @@ export async function POST(request: Request) {
       duplicateRows: duplicateCount,
       errorRows: errors.length,
       status: status as never,
-      errorDetails: errors.length > 0 ? errors : undefined,
+      errorDetails: errors.length > 0 ? (errors as any) : undefined,
     },
   });
 
