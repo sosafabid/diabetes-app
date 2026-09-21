@@ -1,6 +1,7 @@
 import { prisma } from "../../../src/lib/prisma";
 import { SummaryEngine } from "../../../src/domain/SummaryEngine";
 import { PatternEngine } from "../../../src/domain/PatternEngine";
+import { HourlyPatternEngine } from "../../../src/domain/HourlyPatternEngine";
 import type { PeriodType } from "../../../src/domain/summaryTypes";
 import {
   zonedStartOfDay,
@@ -148,6 +149,8 @@ export async function getResumenData(
       createdAt: e.createdAt,
       status: e.status,
       carbsConsumedG: e.carbsConsumedG,
+      treatedAt: e.treatedAt,
+      severeMarkedAt: e.severeMarkedAt,
     })),
   });
 
@@ -167,6 +170,22 @@ export async function getResumenData(
       sleepHours: c.sleepHours,
       isMenstruating: c.isMenstruating,
     })),
+    timeZone,
+  });
+
+  const hourlyPatternEngine = new HourlyPatternEngine();
+  const hourlyPattern = hourlyPatternEngine.compute({
+    glucoseReadings: glucoseReadings.map((r) => ({
+      timestamp: r.timestamp,
+      value: r.glucoseValue,
+      unit: r.unit,
+      source: r.measurementSource,
+    })),
+    meals: meals.map((m) => ({ timestamp: m.timestamp, carbsG: m.carbsGDirect })),
+    insulinEvents: insulinEvents.map((e) => ({ timestamp: e.timestamp, dose: e.dose })),
+    periodStart: start,
+    periodEnd: end,
+    timeZone,
   });
 
   const maxInsulin = Math.max(0, ...Object.values(summary.insulin.byInsulinName));
@@ -193,6 +212,7 @@ export async function getResumenData(
     plan,
     summary,
     patterns,
+    hourlyPattern,
     maxInsulin,
     maxMealType,
     minutesByActivityType,
@@ -203,4 +223,72 @@ export async function getResumenData(
     exerciseEvents,
     contextEvents,
   };
+}
+
+export interface WeeklyGridDay {
+  dateLabel: string; // "Lun 15/9"
+  glucosePoints: { timestamp: Date; value: number; unit: "MGDL" | "MMOLL"; source: "BLOOD" | "CGM" }[];
+  totalCarbsG: number;
+  totalInsulinUnits: number;
+  lowEventCount: number;
+}
+
+const WEEKDAY_LABELS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+
+/**
+ * Datos para la cuadrícula semanal — SIEMPRE los últimos 7 días terminando
+ * hoy, sin importar qué período esté seleccionado en el resto de /resumen
+ * (como el "Weekly Summary" de LibreView, que es su propio reporte fijo).
+ */
+export async function getWeeklyGridData(userId: string, timeZone: string): Promise<WeeklyGridDay[]> {
+  const today = new Date();
+  const rangeStart = zonedStartOfDay(zonedAddDays(today, -6, timeZone), timeZone);
+  const rangeEnd = zonedEndOfDay(today, timeZone);
+
+  const [glucoseReadings, meals, insulinEvents, hypoglycemiaEvents] = await Promise.all([
+    prisma.glucoseReading.findMany({
+      where: { userId, timestamp: { gte: rangeStart, lte: rangeEnd } },
+    }),
+    prisma.meal.findMany({
+      where: { userId, timestamp: { gte: rangeStart, lte: rangeEnd } },
+    }),
+    prisma.insulinEvent.findMany({
+      where: { userId, timestamp: { gte: rangeStart, lte: rangeEnd } },
+    }),
+    prisma.hypoglycemiaEvent.findMany({
+      where: { userId, createdAt: { gte: rangeStart, lte: rangeEnd } },
+    }),
+  ]);
+
+  const days: WeeklyGridDay[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const dayDate = zonedAddDays(today, -i, timeZone);
+    const dayStart = zonedStartOfDay(dayDate, timeZone);
+    const dayEnd = zonedEndOfDay(dayDate, timeZone);
+    const ymd = formatYMDInTZ(dayDate, timeZone);
+    const [, month, dayNum] = ymd.split("-");
+    const weekdayIdx = new Date(dayStart).getUTCDay(); // suficiente para la etiqueta
+
+    const dayGlucose = glucoseReadings
+      .filter((r) => r.timestamp >= dayStart && r.timestamp <= dayEnd)
+      .map((r) => ({
+        timestamp: r.timestamp,
+        value: r.glucoseValue,
+        unit: r.unit,
+        source: r.measurementSource,
+      }));
+    const dayMeals = meals.filter((m) => m.timestamp >= dayStart && m.timestamp <= dayEnd);
+    const dayInsulin = insulinEvents.filter((e) => e.timestamp >= dayStart && e.timestamp <= dayEnd);
+    const dayHypo = hypoglycemiaEvents.filter((e) => e.createdAt >= dayStart && e.createdAt <= dayEnd);
+
+    days.push({
+      dateLabel: `${WEEKDAY_LABELS[weekdayIdx]} ${Number(dayNum)}/${Number(month)}`,
+      glucosePoints: dayGlucose,
+      totalCarbsG: Math.round(dayMeals.reduce((sum, m) => sum + (m.carbsGDirect ?? 0), 0) * 10) / 10,
+      totalInsulinUnits: Math.round(dayInsulin.reduce((sum, e) => sum + e.dose, 0) * 10) / 10,
+      lowEventCount: dayHypo.length,
+    });
+  }
+
+  return days;
 }

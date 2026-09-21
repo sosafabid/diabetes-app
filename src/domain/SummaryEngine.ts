@@ -41,26 +41,48 @@ export class SummaryEngine {
 
     const statsFor = (readings: typeof input.glucoseReadings): GlucoseSourceStats => {
       if (readings.length === 0) {
-        return { count: 0, average: null, min: null, max: null, lowCount: 0, highCount: 0 };
+        return {
+          count: 0,
+          average: null,
+          min: null,
+          max: null,
+          lowCount: 0,
+          highCount: 0,
+          variabilityPercentCV: null,
+        };
       }
       const valuesMgdl = readings.map((r) => toMgdl(r.value, r.unit));
       const sum = valuesMgdl.reduce((a, b) => a + b, 0);
+      const mean = sum / readings.length;
+      const variance =
+        valuesMgdl.reduce((acc, v) => acc + (v - mean) * (v - mean), 0) / valuesMgdl.length;
+      const stdDev = Math.sqrt(variance);
       return {
         count: readings.length,
-        average: Math.round((sum / readings.length) * 10) / 10,
+        average: Math.round(mean * 10) / 10,
         min: Math.min(...valuesMgdl),
         max: Math.max(...valuesMgdl),
         lowCount: valuesMgdl.filter((v) => v < lowThreshold).length,
         highCount: valuesMgdl.filter((v) => v > highThreshold).length,
+        variabilityPercentCV:
+          readings.length > 1 && mean > 0 ? Math.round((stdDev / mean) * 1000) / 10 : null,
       };
     };
 
+    const combinedStats = statsFor(input.glucoseReadings);
     const glucose: GlucoseSummary = {
-      combined: statsFor(input.glucoseReadings),
+      combined: combinedStats,
       bySource: {
         BLOOD: statsFor(bloodReadings),
         CGM: statsFor(cgmReadings),
       },
+      // GMI (Glucose Management Indicator) — fórmula de Bergenstal et al.
+      // 2018, requiere el promedio en mg/dL. Es un ESTIMADO de A1C, no un
+      // resultado de laboratorio; más preciso con 14+ días de datos.
+      gmiPercent:
+        combinedStats.average != null
+          ? Math.round((3.31 + 0.02392 * combinedStats.average) * 10) / 10
+          : null,
     };
 
     const insulin: InsulinSummary = {
@@ -102,6 +124,14 @@ export class SummaryEngine {
     const treatedEvents = input.hypoglycemiaEvents.filter(
       (e) => e.status === "TREATED" && e.carbsConsumedG != null,
     );
+    const eventsWithDuration = input.hypoglycemiaEvents
+      .map((e) => {
+        const endAt = e.treatedAt ?? e.severeMarkedAt;
+        if (!endAt) return null;
+        const minutes = (endAt.getTime() - e.createdAt.getTime()) / 60000;
+        return minutes >= 0 ? minutes : null;
+      })
+      .filter((m): m is number => m != null);
     const hypoglycemia: HypoglycemiaSummary = {
       episodeCount: input.hypoglycemiaEvents.length,
       treatedCount: input.hypoglycemiaEvents.filter((e) => e.status === "TREATED").length,
@@ -113,6 +143,12 @@ export class SummaryEngine {
                 treatedEvents.length) *
                 10,
             ) / 10
+          : null,
+      averageDurationMinutes:
+        eventsWithDuration.length > 0
+          ? Math.round(
+              eventsWithDuration.reduce((sum, m) => sum + m, 0) / eventsWithDuration.length,
+            )
           : null,
     };
 

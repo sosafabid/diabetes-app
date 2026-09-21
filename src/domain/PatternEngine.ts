@@ -55,7 +55,7 @@ export interface PatternDataRow {
 }
 
 export interface PatternResult {
-  id: "sleep" | "activity" | "cycle" | "meals" | "insulin";
+  id: "sleep" | "activity" | "cycle" | "meals" | "insulin" | "timeOfDay";
   titleEs: string;
   emoji: string;
   available: boolean;
@@ -374,6 +374,74 @@ function computeInsulinPattern(
   };
 }
 
+function hourInTZ(date: Date, timeZone: string): number {
+  const dtf = new Intl.DateTimeFormat("en-US", { timeZone, hour12: false, hour: "2-digit" });
+  const hourStr = dtf.formatToParts(date).find((p) => p.type === "hour")?.value ?? "00";
+  const h = Number(hourStr);
+  return h === 24 ? 0 : h;
+}
+
+function timeOfDayLabel(hour: number): string {
+  if (hour >= 4 && hour < 10) return "Mañana (4am-10am)";
+  if (hour >= 10 && hour < 16) return "Mediodía (10am-4pm)";
+  if (hour >= 16 && hour < 22) return "Tarde (4pm-10pm)";
+  return "Noche (10pm-4am)";
+}
+
+const TIME_OF_DAY_ORDER = [
+  "Mañana (4am-10am)",
+  "Mediodía (10am-4pm)",
+  "Tarde (4pm-10pm)",
+  "Noche (10pm-4am)",
+];
+
+function computeTimeOfDayPattern(
+  readings: PatternGlucoseInput[],
+  timeZone: string,
+): PatternResult {
+  const base = { id: "timeOfDay" as const, titleEs: "Franja horaria", emoji: "🕓" };
+
+  const byLabel = new Map<string, { blood: number[]; cgm: number[] }>();
+  for (const label of TIME_OF_DAY_ORDER) byLabel.set(label, { blood: [], cgm: [] });
+
+  for (const r of readings) {
+    const label = timeOfDayLabel(hourInTZ(r.timestamp, timeZone));
+    const mgdl = toMgdl(r.value, r.unit);
+    const entry = byLabel.get(label)!;
+    if (r.source === "CGM") entry.cgm.push(mgdl);
+    else entry.blood.push(mgdl);
+  }
+
+  const groups: PatternGroup[] = [];
+  const dataRows: PatternDataRow[] = [];
+  for (const label of TIME_OF_DAY_ORDER) {
+    const { blood, cgm } = byLabel.get(label)!;
+    const chosen = cgm.length > 0 ? cgm : blood;
+    if (chosen.length === 0) continue;
+    const average = round1(avg(chosen));
+    groups.push({ labelEs: label, n: chosen.length, avgGlucoseMgdl: average });
+    dataRows.push({ labelEs: label, detailEs: `${chosen.length} lecturas`, glucoseMgdl: average });
+  }
+
+  if (groups.length < 2) {
+    return {
+      ...base,
+      available: false,
+      insufficientMessageEs:
+        "Todavía no hay suficientes lecturas repartidas en distintas franjas del día para comparar.",
+    };
+  }
+
+  const summaryParts = groups.map((g) => `${g.labelEs.split(" (")[0]}: ${g.avgGlucoseMgdl} mg/dL`);
+  return {
+    ...base,
+    available: true,
+    summaryEs: `Promedio de glucosa por franja horaria — ${summaryParts.join(" · ")}.`,
+    groups,
+    dataRows,
+  };
+}
+
 export class PatternEngine {
   compute(input: {
     glucoseReadings: PatternGlucoseInput[];
@@ -381,6 +449,9 @@ export class PatternEngine {
     meals: PatternMealInput[];
     insulinEvents: PatternInsulinInput[];
     contextEvents: PatternContextInput[];
+    /** Para agrupar por franja horaria en la zona correcta. Por defecto UTC
+     * (relevante solo para el nuevo patrón "Franja horaria"). */
+    timeZone?: string;
   }): PatternResult[] {
     const glucoseByDay = dailyAverages(input.glucoseReadings);
     return [
@@ -389,6 +460,7 @@ export class PatternEngine {
       computeCyclePattern(glucoseByDay, input.contextEvents),
       computeMealsPattern(input.meals, input.glucoseReadings),
       computeInsulinPattern(input.insulinEvents, glucoseByDay),
+      computeTimeOfDayPattern(input.glucoseReadings, input.timeZone ?? "UTC"),
     ];
   }
 }

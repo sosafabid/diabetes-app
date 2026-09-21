@@ -3,11 +3,14 @@ import { getUserTimeZone } from "../../../src/lib/timezone";
 import { prisma } from "../../../src/lib/prisma";
 import {
   getResumenData,
+  getWeeklyGridData,
   MEAL_TYPE_LABELS,
   EXERCISE_TYPE_LABELS,
 } from "../../(main)/resumen/getResumenData";
 import GlucoseDayChart from "../../(main)/charts/GlucoseDayChart";
 import GlucoseTrendLineChart from "../../(main)/charts/GlucoseTrendLineChart";
+import HourlyPatternChart from "../../(main)/charts/HourlyPatternChart";
+import WeeklyGrid from "../../(main)/resumen/WeeklyGrid";
 import ExportPrintButton from "./ExportPrintButton";
 
 export const metadata = {
@@ -22,7 +25,10 @@ export default async function ExportarResumenPage({
   const session = await requireSession();
   const timeZone = await getUserTimeZone();
   const user = await prisma.user.findUnique({ where: { id: session.userId } });
-  const data = await getResumenData(session.userId, timeZone, searchParams);
+  const [data, weeklyGridDays] = await Promise.all([
+    getResumenData(session.userId, timeZone, searchParams),
+    getWeeklyGridData(session.userId, timeZone),
+  ]);
   const {
     periodType,
     start,
@@ -30,6 +36,7 @@ export default async function ExportarResumenPage({
     plan,
     summary,
     patterns,
+    hourlyPattern,
     minutesByActivityType,
     glucosePoints,
     insulinEvents,
@@ -67,6 +74,16 @@ export default async function ExportarResumenPage({
                 <span className="hero-stat-label">mg/dL promedio</span>
               </div>
               <div className="hero-stat">
+                <span className="hero-stat-value">{summary.glucose.gmiPercent ?? "—"}%</span>
+                <span className="hero-stat-label">GMI (A1C estimado)</span>
+              </div>
+              <div className="hero-stat">
+                <span className="hero-stat-value">
+                  {summary.glucose.combined.variabilityPercentCV ?? "—"}%
+                </span>
+                <span className="hero-stat-label">variabilidad (CV)</span>
+              </div>
+              <div className="hero-stat">
                 <span className="hero-stat-value">{summary.insulin.totalUnits}</span>
                 <span className="hero-stat-label">U de insulina</span>
               </div>
@@ -79,6 +96,10 @@ export default async function ExportarResumenPage({
                 <span className="hero-stat-label">episodios de hipoglucemia</span>
               </div>
             </div>
+            <p className="form-hint">
+              El GMI es un estimado de A1C a partir del promedio de glucosa (Bergenstal et
+              al., 2018) — no reemplaza un A1C de laboratorio.
+            </p>
           </section>
 
           <section>
@@ -101,6 +122,22 @@ export default async function ExportarResumenPage({
                 lowThreshold={plan?.lowThreshold}
               />
             )}
+          </section>
+
+          {periodType !== "day" && hourlyPattern.available && (
+            <section>
+              <h2>Patrón por hora del día</h2>
+              <p className="form-hint">
+                Promedio de todos los días del período combinados en una sola línea de 24 horas.
+              </p>
+              <HourlyPatternChart buckets={hourlyPattern.buckets} lowThreshold={plan?.lowThreshold} />
+            </section>
+          )}
+
+          <section>
+            <h2>Resumen semanal</h2>
+            <p className="form-hint">Los últimos 7 días, sin importar el período de arriba.</p>
+            <WeeklyGrid days={weeklyGridDays} timeZone={timeZone} />
           </section>
 
           <section>
@@ -170,6 +207,12 @@ export default async function ExportarResumenPage({
                   <li>
                     Promedio de carbohidratos usados para tratarlas:{" "}
                     {summary.hypoglycemia.averageCarbsConsumedG} g
+                  </li>
+                )}
+                {summary.hypoglycemia.averageDurationMinutes != null && (
+                  <li>
+                    Duración promedio hasta quedar tratada/resuelta:{" "}
+                    {summary.hypoglycemia.averageDurationMinutes} min
                   </li>
                 )}
               </ul>

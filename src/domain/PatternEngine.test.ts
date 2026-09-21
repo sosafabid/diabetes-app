@@ -84,4 +84,27 @@ describe("PatternEngine", () => {
     const meals = results.find((r) => r.id === "meals")!;
     expect(meals.available).toBe(false);
   });
+
+  it("agrupa por franja horaria y nunca mezcla sangre con CGM en la misma franja", () => {
+    const engine = new PatternEngine();
+    const results = engine.compute({
+      glucoseReadings: [
+        // Mañana (4-10am UTC): sangre y CGM juntos — debe usar solo CGM
+        { timestamp: d("2026-09-01T08:00:00Z"), value: 300, unit: "MGDL", source: "BLOOD" },
+        { timestamp: d("2026-09-02T08:00:00Z"), value: 100, unit: "MGDL", source: "CGM" },
+        // Noche (10pm-4am UTC)
+        { timestamp: d("2026-09-01T23:00:00Z"), value: 140, unit: "MGDL", source: "CGM" },
+      ],
+      exerciseEvents: [],
+      meals: [],
+      insulinEvents: [],
+      contextEvents: [],
+      timeZone: "UTC",
+    });
+    const timeOfDay = results.find((r) => r.id === "timeOfDay")!;
+    expect(timeOfDay.available).toBe(true);
+    const morning = timeOfDay.groups?.find((g) => g.labelEs.startsWith("Mañana"));
+    expect(morning?.avgGlucoseMgdl).toBe(100); // solo CGM, ignora el 300 de sangre
+    expect(morning?.n).toBe(1);
+  });
 });

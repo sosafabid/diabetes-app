@@ -1,13 +1,20 @@
 import Link from "next/link";
 import { requireSession } from "../../../src/lib/auth-guard";
 import { getUserTimeZone } from "../../../src/lib/timezone";
-import { getResumenData, MEAL_TYPE_LABELS, EXERCISE_TYPE_LABELS } from "./getResumenData";
+import {
+  getResumenData,
+  getWeeklyGridData,
+  MEAL_TYPE_LABELS,
+  EXERCISE_TYPE_LABELS,
+} from "./getResumenData";
 import PeriodSelector from "./PeriodSelector";
 import PatternCard from "./PatternCard";
 import StatBar from "./StatBar";
 import GlucoseRangeBar from "./GlucoseRangeBar";
 import GlucoseDayChart from "../charts/GlucoseDayChart";
 import GlucoseTrendLineChart from "../charts/GlucoseTrendLineChart";
+import HourlyPatternChart from "../charts/HourlyPatternChart";
+import WeeklyGrid from "./WeeklyGrid";
 
 export default async function ResumenPage({
   searchParams,
@@ -16,7 +23,10 @@ export default async function ResumenPage({
 }) {
   const session = await requireSession();
   const timeZone = await getUserTimeZone();
-  const data = await getResumenData(session.userId, timeZone, searchParams);
+  const [data, weeklyGridDays] = await Promise.all([
+    getResumenData(session.userId, timeZone, searchParams),
+    getWeeklyGridData(session.userId, timeZone),
+  ]);
   const {
     periodType,
     start,
@@ -26,6 +36,7 @@ export default async function ResumenPage({
     plan,
     summary,
     patterns,
+    hourlyPattern,
     maxInsulin,
     maxMealType,
     minutesByActivityType,
@@ -88,6 +99,16 @@ export default async function ResumenPage({
           <span className="hero-stat-label">mg/dL promedio</span>
         </div>
         <div className="hero-stat">
+          <span className="hero-stat-value">{summary.glucose.gmiPercent ?? "—"}%</span>
+          <span className="hero-stat-label">GMI (A1C estimado)</span>
+        </div>
+        <div className="hero-stat">
+          <span className="hero-stat-value">
+            {summary.glucose.combined.variabilityPercentCV ?? "—"}%
+          </span>
+          <span className="hero-stat-label">variabilidad (CV)</span>
+        </div>
+        <div className="hero-stat">
           <span className="hero-stat-value">{summary.insulin.totalUnits}</span>
           <span className="hero-stat-label">U de insulina</span>
         </div>
@@ -100,6 +121,12 @@ export default async function ResumenPage({
           <span className="hero-stat-label">episodios de hipoglucemia</span>
         </div>
       </div>
+      <p className="form-hint" style={{ marginTop: "-1rem", marginBottom: "1.5rem" }}>
+        El GMI es un <strong>estimado</strong> de A1C a partir de tu promedio de glucosa
+        (fórmula de Bergenstal et al., 2018) — no reemplaza un A1C de laboratorio, y es más
+        preciso con 14 o más días de datos. La variabilidad (%CV) es qué tanto se dispersan
+        tus lecturas respecto al promedio.
+      </p>
 
       {/* Tendencia de glucosa — usa exactamente el mismo período de arriba */}
       <section className="summary-section" id="tendencia">
@@ -122,6 +149,32 @@ export default async function ResumenPage({
             lowThreshold={plan?.lowThreshold}
           />
         )}
+      </section>
+
+      {/* Patrón por hora del día — "¿cómo se ve un día típico?", combina
+          todos los días del período. Solo tiene sentido con más de un día. */}
+      {periodType !== "day" && (
+        <section className="summary-section">
+          <h2>🕐 Patrón por hora del día</h2>
+          <p className="form-hint" style={{ marginBottom: "1rem" }}>
+            Promedio de todos los días del período combinados en una sola línea de 24 horas.
+          </p>
+          {hourlyPattern.available ? (
+            <HourlyPatternChart buckets={hourlyPattern.buckets} lowThreshold={plan?.lowThreshold} />
+          ) : (
+            <p className="form-hint">{hourlyPattern.insufficientMessageEs}</p>
+          )}
+        </section>
+      )}
+
+      {/* Resumen semanal — siempre los últimos 7 días, sin importar el
+          período elegido arriba (igual que el reporte semanal de LibreView) */}
+      <section className="summary-section">
+        <h2>📆 Resumen semanal</h2>
+        <p className="form-hint" style={{ marginBottom: "1rem" }}>
+          Los últimos 7 días, sin importar el período que tengas seleccionado arriba.
+        </p>
+        <WeeklyGrid days={weeklyGridDays} timeZone={timeZone} />
       </section>
 
       {/* Patrones — comparaciones descriptivas de tus propios datos, sin
@@ -232,6 +285,12 @@ export default async function ResumenPage({
               <li>
                 Promedio de carbohidratos usados para tratarlas:{" "}
                 {summary.hypoglycemia.averageCarbsConsumedG} g
+              </li>
+            )}
+            {summary.hypoglycemia.averageDurationMinutes != null && (
+              <li>
+                Duración promedio hasta quedar tratada/resuelta:{" "}
+                {summary.hypoglycemia.averageDurationMinutes} min
               </li>
             )}
           </ul>

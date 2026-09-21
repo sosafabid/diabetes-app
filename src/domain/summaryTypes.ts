@@ -42,6 +42,10 @@ export interface HypoglycemiaEventInput {
   createdAt: Date;
   status: "PENDING" | "TREATED" | "SEVERE" | "RESOLVED";
   carbsConsumedG: number | null;
+  /** Cuándo se registró el tratamiento estándar (flujo carbohidratos), si aplica. */
+  treatedAt?: Date | null;
+  /** Cuándo se marcó el escenario severo, si aplica. */
+  severeMarkedAt?: Date | null;
 }
 
 export interface SummaryEngineInput {
@@ -64,6 +68,8 @@ export interface GlucoseSourceStats {
   max: number | null;
   lowCount: number;
   highCount: number;
+  /** Coeficiente de variación (%) — desviación estándar / promedio × 100. */
+  variabilityPercentCV: number | null;
 }
 
 export interface GlucoseSummary {
@@ -72,6 +78,10 @@ export interface GlucoseSummary {
     BLOOD: GlucoseSourceStats;
     CGM: GlucoseSourceStats;
   };
+  /** Glucose Management Indicator — A1C estimado a partir del promedio de
+   * glucosa (fórmula de Bergenstal et al. 2018). Es un ESTIMADO, no
+   * reemplaza un A1C de laboratorio; más preciso con 14+ días de datos. */
+  gmiPercent: number | null;
 }
 
 export interface InsulinSummary {
@@ -99,6 +109,9 @@ export interface HypoglycemiaSummary {
   treatedCount: number;
   severeCount: number;
   averageCarbsConsumedG: number | null;
+  /** Minutos promedio entre detectarse la baja y quedar tratada/marcada
+   * severa (solo cuenta episodios que ya tienen ese momento registrado). */
+  averageDurationMinutes: number | null;
 }
 
 export interface MissingDataNote {

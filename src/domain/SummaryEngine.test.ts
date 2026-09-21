@@ -135,6 +135,57 @@ describe("SummaryEngine", () => {
       result.missingDataNotes.some((n) => n.messageEs.includes("pocas mediciones")),
     ).toBe(false);
   });
+
+  it("calcula el GMI con la fórmula de Bergenstal et al. (2018)", () => {
+    const result = engine.compute(
+      baseInput({
+        glucoseReadings: [
+          { timestamp: new Date(), value: 150, unit: "MGDL", source: "CGM" },
+        ],
+      }),
+    );
+    // GMI = 3.31 + 0.02392 * 150 = 6.898 → redondeado a 6.9
+    expect(result.glucose.gmiPercent).toBeCloseTo(6.9, 1);
+  });
+
+  it("devuelve GMI null cuando no hay lecturas", () => {
+    const result = engine.compute(baseInput());
+    expect(result.glucose.gmiPercent).toBeNull();
+  });
+
+  it("calcula la variabilidad (%CV) y es null con una sola lectura", () => {
+    const single = engine.compute(
+      baseInput({
+        glucoseReadings: [{ timestamp: new Date(), value: 100, unit: "MGDL", source: "CGM" }],
+      }),
+    );
+    expect(single.glucose.combined.variabilityPercentCV).toBeNull();
+
+    const varied = engine.compute(
+      baseInput({
+        glucoseReadings: [
+          { timestamp: new Date(), value: 100, unit: "MGDL", source: "CGM" },
+          { timestamp: new Date(), value: 200, unit: "MGDL", source: "CGM" },
+        ],
+      }),
+    );
+    // media 150, desviación estándar poblacional 50 → CV = 50/150*100 ≈ 33.3%
+    expect(varied.glucose.combined.variabilityPercentCV).toBeCloseTo(33.3, 1);
+  });
+
+  it("calcula la duración promedio de hipoglucemias solo con episodios que ya tienen cierre", () => {
+    const createdAt = new Date("2026-09-01T10:00:00");
+    const treatedAt = new Date("2026-09-01T10:20:00"); // 20 min después
+    const result = engine.compute(
+      baseInput({
+        hypoglycemiaEvents: [
+          { createdAt, status: "TREATED", carbsConsumedG: 15, treatedAt },
+          { createdAt, status: "PENDING", carbsConsumedG: null }, // sin cierre — no cuenta
+        ],
+      }),
+    );
+    expect(result.hypoglycemia.averageDurationMinutes).toBe(20);
+  });
 });
 
 describe("resolvePeriod", () => {
