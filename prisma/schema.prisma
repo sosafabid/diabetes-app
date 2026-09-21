@@ -61,6 +61,7 @@ model User {
   hypoglycemiaPlans  HypoglycemiaPlan[]
   hypoglycemiaEvents HypoglycemiaEvent[]
   passwordResetTokens PasswordResetToken[]
+  importBatches       ImportBatch[]
 }
 
 // ----------------------------------------------------------------------------
@@ -78,6 +79,54 @@ model PasswordResetToken {
   createdAt DateTime  @default(now())
 
   @@index([userId])
+}
+
+// ----------------------------------------------------------------------------
+// IMPORTACIÓN DE DATOS DE GLUCOSA (CGM / glucómetros vía CSV)
+// ----------------------------------------------------------------------------
+// Un lote por cada archivo importado. Las lecturas que trae ese archivo se
+// guardan como GlucoseReading normales (misma tabla, mismo pipeline que
+// /resumen, Mi día, gráficos y PDF ya usan) con importBatchId apuntando
+// aquí — así "eliminar esta importación" borra solo esas lecturas, nunca
+// las manuales ni las de otro lote.
+model ImportBatch {
+  id                 String            @id @default(uuid())
+  userId             String
+  user               User              @relation(fields: [userId], references: [id])
+
+  fileName           String
+  // Fuente declarada por el paciente para TODO el archivo al confirmar la
+  // importación — nunca se adivina silenciosamente (ver GenericCSVImporter).
+  sourceType         MeasurementSource
+  deviceManufacturer String?
+  deviceModel        String?
+
+  importedAt         DateTime          @default(now())
+  dateRangeStart     DateTime?
+  dateRangeEnd       DateTime?
+
+  totalRows          Int
+  importedRows       Int
+  duplicateRows      Int
+  errorRows          Int
+
+  status             ImportBatchStatus @default(PENDING)
+  // [{ row: number, reason: string }] — nunca se "repara" una fila sola,
+  // solo se reporta por qué se omitió.
+  errorDetails       Json?
+
+  readings           GlucoseReading[]
+
+  @@index([userId, importedAt])
+}
+
+enum ImportBatchStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  PARTIAL
+  FAILED
+  REVERTED
 }
 
 enum GlucoseUnit {
@@ -185,12 +234,27 @@ model GlucoseReading {
   context           GlucoseContext?
   notes             String?
 
+  // Trazabilidad de importación — null/MANUAL para todo lo que ya existía
+  // y para el registro manual normal (default MANUAL, nunca hay que
+  // tocar los inserts existentes).
+  origin             ReadingOrigin @default(MANUAL)
+  deviceManufacturer String?
+  deviceModel        String?
+  importBatchId      String?
+  importBatch        ImportBatch?  @relation(fields: [importBatchId], references: [id])
+
   createdAt         DateTime @default(now())
 
   triggeredHypoglycemiaEvent HypoglycemiaEvent? @relation("TriggeringReading")
   resolvedHypoglycemiaEvent  HypoglycemiaEvent? @relation("ResolvedReading")
 
   @@index([userId, timestamp])
+  @@index([importBatchId])
+}
+
+enum ReadingOrigin {
+  MANUAL
+  IMPORT
 }
 
 enum MeasurementSource {

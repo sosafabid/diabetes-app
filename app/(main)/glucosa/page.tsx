@@ -1,6 +1,7 @@
 import { prisma } from "../../../src/lib/prisma";
 import { requireSession } from "../../../src/lib/auth-guard";
 import { getUserTimeZone } from "../../../src/lib/timezone";
+import Link from "next/link";
 import RegistrarGlucosaForm from "./RegistrarGlucosaForm";
 
 export default async function GlucosaPage() {
@@ -25,6 +26,11 @@ export default async function GlucosaPage() {
   return (
     <div className="page">
       <h1>Glucosa</h1>
+      <p className="page-subtitle">
+        <Link href="/glucosa/importar" className="secondary-button" style={{ textDecoration: "none" }}>
+          📥 Importar datos de un sensor
+        </Link>
+      </p>
       <RegistrarGlucosaForm lowThreshold={lowThreshold} highThreshold={highThreshold} />
 
       <h2>Últimas lecturas</h2>
@@ -41,6 +47,11 @@ export default async function GlucosaPage() {
               </span>
               <span className="event-value">
                 {r.glucoseValue} {r.unit === "MGDL" ? "mg/dL" : "mmol/L"}
+                {r.origin === "IMPORT" && (
+                  <span className="form-hint" style={{ marginLeft: "0.4rem", padding: "0.1rem 0.4rem" }}>
+                    📥 importado
+                  </span>
+                )}
               </span>
               <span className="event-time">
                 {new Date(r.timestamp).toLocaleString("es-CR", { timeZone })}
