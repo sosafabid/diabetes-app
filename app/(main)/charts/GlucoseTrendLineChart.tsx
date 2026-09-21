@@ -135,7 +135,7 @@ export default function GlucoseTrendLineChart({
             x2={WIDTH - MARGIN_RIGHT}
             y1={yForValue(lowThreshold)}
             y2={yForValue(lowThreshold)}
-            stroke="var(--color-danger)"
+            stroke="var(--color-warning)"
             strokeDasharray="4 3"
             strokeWidth={1}
           />
@@ -146,7 +146,7 @@ export default function GlucoseTrendLineChart({
             x2={WIDTH - MARGIN_RIGHT}
             y1={yForValue(highThreshold)}
             y2={yForValue(highThreshold)}
-            stroke="var(--color-warning)"
+            stroke="var(--color-danger)"
             strokeDasharray="4 3"
             strokeWidth={1}
           />
