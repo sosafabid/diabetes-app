@@ -26,6 +26,12 @@ export interface ColumnMapping {
   /** Columna con solo la hora, si fecha y hora vienen separadas. */
   timeColumn?: string;
   glucoseColumn?: string;
+  /** Columna alterna de glucosa — algunos exportadores (p. ej. FreeStyle
+   * Libre) parten el valor en dos columnas según el tipo de registro
+   * ("Historial de glucosa" vs. "Escaneo de glucosa"), y cada fila solo
+   * trae UNA de las dos llena. Si la principal viene vacía, se prueba
+   * esta. */
+  glucoseColumnFallback?: string;
   /** Columna que indica la unidad por fila, si el archivo la trae. */
   unitColumn?: string;
 }
@@ -67,10 +73,19 @@ export interface ExistingReadingKey {
   unit: GlucoseUnitCode;
 }
 
-const DATETIME_HINTS = ["timestamp", "datetime", "device timestamp", "fecha y hora", "fecha/hora"];
+const DATETIME_HINTS = [
+  "timestamp",
+  "datetime",
+  "device timestamp",
+  "sello de tiempo del dispositivo", // FreeStyle Libre
+  "fecha y hora",
+  "fecha/hora",
+];
 const DATE_HINTS = ["date", "fecha"];
 const TIME_HINTS = ["time", "hora"];
+// Columna PRINCIPAL de glucosa — orden importa: las más específicas primero.
 const GLUCOSE_HINTS = [
+  "historial de glucosa", // FreeStyle Libre — lecturas automáticas del sensor
   "glucose value",
   "glucose_value",
   "historic glucose",
@@ -82,17 +97,31 @@ const GLUCOSE_HINTS = [
   "mg/dl",
   "mmol/l",
 ];
+// Columna ALTERNA — exportadores como Libre parten el valor en dos columnas
+// según el tipo de registro (automático vs. escaneo manual), y cada fila
+// solo trae UNA llena.
+const GLUCOSE_FALLBACK_HINTS = [
+  "escaneo de glucosa", // FreeStyle Libre — escaneo manual
+  "glucosa del escáner",
+  "scan glucose",
+];
 const UNIT_HINTS = ["unit", "unidad"];
 
 function normalizeHeader(h: string): string {
   return h.trim().toLowerCase();
 }
 
-function findColumn(headers: string[], normalized: string[], hints: string[]): string | undefined {
+function findColumn(
+  headers: string[],
+  normalized: string[],
+  hints: string[],
+  allowPartial = true,
+): string | undefined {
   for (const hint of hints) {
     const exact = normalized.findIndex((h) => h === hint);
     if (exact !== -1) return headers[exact];
   }
+  if (!allowPartial) return undefined;
   for (const hint of hints) {
     const partial = normalized.findIndex((h) => h.includes(hint));
     if (partial !== -1) return headers[partial];
@@ -109,9 +138,23 @@ export function detectColumns(headers: string[]): DetectedColumns {
   const dateColumn = datetimeColumn ? undefined : findColumn(headers, normalized, DATE_HINTS);
   const timeColumn = datetimeColumn ? undefined : findColumn(headers, normalized, TIME_HINTS);
   const glucoseColumn = findColumn(headers, normalized, GLUCOSE_HINTS);
-  const unitColumn = findColumn(headers, normalized, UNIT_HINTS);
+  const unitColumn = findColumn(headers, normalized, UNIT_HINTS, false);
 
-  const mapping: ColumnMapping = { datetimeColumn, dateColumn, timeColumn, glucoseColumn, unitColumn };
+  let glucoseColumnFallback: string | undefined;
+  if (glucoseColumn) {
+    const remainingHeaders = headers.filter((h) => h !== glucoseColumn);
+    const remainingNormalized = remainingHeaders.map(normalizeHeader);
+    glucoseColumnFallback = findColumn(remainingHeaders, remainingNormalized, GLUCOSE_FALLBACK_HINTS);
+  }
+
+  const mapping: ColumnMapping = {
+    datetimeColumn,
+    dateColumn,
+    timeColumn,
+    glucoseColumn,
+    glucoseColumnFallback,
+    unitColumn,
+  };
   const hasTimestamp = Boolean(datetimeColumn || dateColumn);
   const confidence: DetectedColumns["confidence"] =
     hasTimestamp && glucoseColumn ? "auto" : hasTimestamp || glucoseColumn ? "partial" : "none";
@@ -126,10 +169,11 @@ function tryParseDate(raw: string): Date | null {
   const direct = new Date(trimmed);
   if (!Number.isNaN(direct.getTime())) return direct;
 
-  // DD/MM/YYYY[ HH:mm[:ss]] — formato común en exports latinoamericanos,
-  // que Date() nativo interpreta mal o rechaza.
+  // DD/MM/YYYY o DD-MM-YYYY [HH:mm[:ss]] — formatos comunes en exports
+  // latinoamericanos y de dispositivos (FreeStyle Libre usa guiones), que
+  // Date() nativo interpreta mal o rechaza.
   const m = trimmed.match(
-    /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/,
+    /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/,
   );
   if (m) {
     const [, d, mo, y, h = "0", mi = "0", s = "0"] = m;
@@ -197,7 +241,11 @@ export function normalizeRows(
     }
 
     const glucoseRaw = mapping.glucoseColumn ? row[mapping.glucoseColumn] : undefined;
-    const glucoseValue = glucoseRaw != null ? tryParseGlucose(glucoseRaw) : null;
+    let glucoseValue = glucoseRaw != null ? tryParseGlucose(glucoseRaw) : null;
+    if (glucoseValue == null && mapping.glucoseColumnFallback) {
+      const fallbackRaw = row[mapping.glucoseColumnFallback];
+      glucoseValue = fallbackRaw != null ? tryParseGlucose(fallbackRaw) : null;
+    }
     if (glucoseValue == null) {
       errors.push({ rowIndex, reasonEs: "Valor de glucosa vacío o no numérico" });
       return;
@@ -243,3 +291,55 @@ export function splitNewAndDuplicates(
   }
   return { newRows, duplicates };
 }
+
+// ============================================================================
+// Detección de la fila de encabezado real.
+// ============================================================================
+// Muchos exportadores (FreeStyle Libre entre ellos) ponen una línea de
+// METADATOS antes del encabezado real — p. ej.:
+//   "Datos de glucosa,Generado el,22-09-2026 03:04 UTC,Generado por,María"
+//   "Dispositivo,Número de serie,Sello de tiempo,...(20 columnas reales)"
+// Asumir que la fila 1 siempre es el encabezado rompía con archivos así.
+// Heurística: de las primeras filas, la que tiene MÁS columnas con
+// contenido es casi siempre el encabezado real (la fila de metadatos trae
+// muchas menos columnas que la tabla de datos real).
+// ============================================================================
+
+/** Recibe filas ya separadas en columnas (típicamente de Papa.parse sin
+ * header) y devuelve el índice de la fila que más probablemente sea el
+ * encabezado real. */
+export function detectHeaderRowIndex(rawRows: string[][], maxRowsToScan = 10): number {
+  let bestIndex = 0;
+  let bestCount = -1;
+  const limit = Math.min(maxRowsToScan, rawRows.length);
+  for (let i = 0; i < limit; i++) {
+    const nonEmptyCount = rawRows[i].filter((cell) => cell.trim() !== "").length;
+    if (nonEmptyCount > bestCount) {
+      bestCount = nonEmptyCount;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
+}
+
+/** Convierte filas crudas (arrays de celdas) en objetos header→valor,
+ * usando la fila `headerRowIndex` como encabezado y descartando todo lo
+ * anterior (metadatos) y las filas totalmente vacías. */
+export function rowsToRecords(
+  rawRows: string[][],
+  headerRowIndex: number,
+): { headers: string[]; records: Record<string, string>[] } {
+  const headers = (rawRows[headerRowIndex] ?? []).map((h) => h.trim());
+  const records = rawRows
+    .slice(headerRowIndex + 1)
+    .filter((row) => row.some((cell) => cell.trim() !== ""))
+    .map((row) => {
+      const obj: Record<string, string> = {};
+      headers.forEach((h, i) => {
+        obj[h] = (row[i] ?? "").trim();
+      });
+      return obj;
+    });
+  return { headers, records };
+}
+

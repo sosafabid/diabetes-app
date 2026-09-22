@@ -69,15 +69,15 @@ export default async function ExportarResumenPage({
           <section>
             <h2>Resumen general</h2>
             <div className="hero-stats">
-              <div className="hero-stat">
+              <div className="hero-stat hero-stat-glucose">
                 <span className="hero-stat-value">{summary.glucose.combined.average ?? "—"}</span>
                 <span className="hero-stat-label">mg/dL promedio</span>
               </div>
-              <div className="hero-stat">
+              <div className="hero-stat hero-stat-glucose">
                 <span className="hero-stat-value">{summary.glucose.gmiPercent ?? "—"}%</span>
                 <span className="hero-stat-label">GMI (A1C estimado)</span>
               </div>
-              <div className="hero-stat">
+              <div className="hero-stat hero-stat-glucose">
                 <span className="hero-stat-value">
                   {summary.glucose.combined.variabilityPercentCV ?? "—"}%
                 </span>
@@ -87,7 +87,7 @@ export default async function ExportarResumenPage({
                 <span className="hero-stat-value">{summary.insulin.totalUnits}</span>
                 <span className="hero-stat-label">U de insulina</span>
               </div>
-              <div className="hero-stat">
+              <div className="hero-stat hero-stat-carbs">
                 <span className="hero-stat-value">{summary.meals.totalCarbsG}</span>
                 <span className="hero-stat-label">g de carbohidratos</span>
               </div>

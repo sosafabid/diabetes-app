@@ -3,6 +3,8 @@ import Papa from "papaparse";
 import { prisma } from "../../../../src/lib/prisma";
 import { requireSession } from "../../../../src/lib/auth-guard";
 import {
+  detectHeaderRowIndex,
+  rowsToRecords,
   normalizeRows,
   splitNewAndDuplicates,
   type ColumnMapping,
@@ -39,16 +41,19 @@ export async function POST(request: Request) {
     );
   }
 
-  const parsed = Papa.parse<Record<string, string>>(body.csvText, {
-    header: true,
-    skipEmptyLines: true,
-  });
-  if (parsed.data.length === 0) {
+  const rawParsed = Papa.parse<string[]>(body.csvText, { skipEmptyLines: true });
+  const rawRows = rawParsed.data;
+  if (rawRows.length === 0) {
+    return NextResponse.json({ error: "El archivo está vacío." }, { status: 400 });
+  }
+  const headerRowIndex = detectHeaderRowIndex(rawRows);
+  const { records } = rowsToRecords(rawRows, headerRowIndex);
+  if (records.length === 0) {
     return NextResponse.json({ error: "El archivo está vacío." }, { status: 400 });
   }
 
   const defaultUnit = body.defaultUnit ?? "MGDL";
-  const { validRows, errors } = normalizeRows(parsed.data, body.mapping, defaultUnit);
+  const { validRows, errors } = normalizeRows(records, body.mapping, defaultUnit);
 
   let newRows = validRows;
   let duplicateCount = 0;
@@ -90,7 +95,7 @@ export async function POST(request: Request) {
       deviceModel: body.deviceModel || undefined,
       dateRangeStart,
       dateRangeEnd,
-      totalRows: parsed.data.length,
+      totalRows: records.length,
       importedRows: newRows.length,
       duplicateRows: duplicateCount,
       errorRows: errors.length,
@@ -123,7 +128,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     batchId: batch.id,
     status: batch.status,
-    totalRows: parsed.data.length,
+    totalRows: records.length,
     importedRows: newRows.length,
     duplicateRows: duplicateCount,
     errorRows: errors.length,

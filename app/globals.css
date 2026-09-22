@@ -1,8 +1,8 @@
 :root {
   /* Tokens exactos del Libro de Marca v1.0 (sección 09) */
-  --color-bg: #FAFCFB;
+  --color-bg: #F4F9F8;
   --color-surface: #FFFFFF;
-  --color-border: #DDE7E7;
+  --color-border: #D5E4E3;
   --color-text: #18323A;
   --color-text-muted: #64777C;
   --color-primary: #07586B;       /* Deep Teal */
@@ -14,11 +14,14 @@
   --color-danger: #C2413B;        /* Clinical High */
   --color-warning: #D97706;       /* Clinical Low */
   --color-info: #287EA3;          /* Clinical Info */
+  --color-nav-hover: #F0F6F5;
+  --color-carbs-tint: #FFF7E3;    /* único valor nuevo — variante suave para tarjetas de carbohidratos */
   --radius-sm: 10px;   /* radius-button */
   --radius: 12px;      /* radius-card */
   --radius-lg: 16px;
   --shadow-sm: 0 1px 2px rgba(24, 50, 58, 0.05), 0 1px 1px rgba(24, 50, 58, 0.03);
   --shadow-md: 0 8px 20px rgba(24, 50, 58, 0.08), 0 2px 6px rgba(24, 50, 58, 0.04);
+  --shadow-card: 0 2px 8px rgba(7, 88, 107, 0.06);
   --transition: 160ms ease;
 }
 
@@ -156,14 +159,14 @@ a {
 }
 
 .app-nav-link:hover {
-  background: var(--color-bg);
+  background: var(--color-nav-hover);
   color: var(--color-text);
 }
 
 .app-nav-link.active {
   background: var(--color-primary-tint);
-  color: var(--color-primary-dark);
-  font-weight: 700;
+  color: var(--color-primary);
+  font-weight: 600;
 }
 
 .app-content {
@@ -204,7 +207,7 @@ a {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
   padding: 1rem;
   transition: box-shadow var(--transition), transform var(--transition);
 }
@@ -229,7 +232,7 @@ a {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
   padding: 1.25rem;
   display: flex;
   flex-direction: column;
@@ -469,7 +472,7 @@ button:disabled {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
   padding: 1rem;
   display: flex;
   flex-direction: column;
@@ -478,6 +481,21 @@ button:disabled {
 
 .hero-stat-warning {
   border-color: var(--color-warning);
+}
+
+.hero-stat-glucose {
+  background: var(--color-primary-tint);
+  border-color: transparent;
+}
+
+.hero-stat-carbs {
+  background: var(--color-carbs-tint);
+  border-color: transparent;
+}
+
+.hero-stat-activity {
+  background: var(--color-secondary-tint);
+  border-color: transparent;
 }
 
 .hero-stat-value {
@@ -494,7 +512,7 @@ button:disabled {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
   padding: 1.25rem;
   margin-bottom: 1.25rem;
 }

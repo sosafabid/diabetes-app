@@ -4,6 +4,8 @@ import { prisma } from "../../../../src/lib/prisma";
 import { requireSession } from "../../../../src/lib/auth-guard";
 import {
   detectColumns,
+  detectHeaderRowIndex,
+  rowsToRecords,
   normalizeRows,
   splitNewAndDuplicates,
   type ColumnMapping,
@@ -41,19 +43,22 @@ export async function POST(request: Request) {
     );
   }
 
-  const parsed = Papa.parse<Record<string, string>>(body.csvText, {
-    header: true,
-    skipEmptyLines: true,
-  });
+  const rawParsed = Papa.parse<string[]>(body.csvText, { skipEmptyLines: true });
+  const rawRows = rawParsed.data;
+  if (rawRows.length === 0) {
+    return NextResponse.json({ error: "El archivo está vacío." }, { status: 400 });
+  }
 
-  const headers = parsed.meta.fields ?? [];
-  if (headers.length === 0 || parsed.data.length === 0) {
+  const headerRowIndex = detectHeaderRowIndex(rawRows);
+  const { headers, records } = rowsToRecords(rawRows, headerRowIndex);
+
+  if (headers.length === 0 || records.length === 0) {
     return NextResponse.json(
       { error: "El archivo está vacío o no se pudo leer como CSV." },
       { status: 400 },
     );
   }
-  if (parsed.data.length > MAX_ROWS) {
+  if (records.length > MAX_ROWS) {
     return NextResponse.json(
       { error: `El archivo tiene demasiadas filas (máximo ${MAX_ROWS}).` },
       { status: 400 },
@@ -65,7 +70,7 @@ export async function POST(request: Request) {
   const defaultUnit = body.defaultUnit ?? "MGDL";
 
   const { validRows, errors, internalDuplicateCount } = normalizeRows(
-    parsed.data,
+    records,
     mapping,
     defaultUnit,
   );
@@ -97,7 +102,7 @@ export async function POST(request: Request) {
     detectedMapping: detected.mapping,
     confidence: detected.confidence,
     mappingUsed: mapping,
-    totalRows: parsed.data.length,
+    totalRows: records.length,
     validRowCount: validRows.length,
     errorRowCount: errors.length,
     internalDuplicateCount,
