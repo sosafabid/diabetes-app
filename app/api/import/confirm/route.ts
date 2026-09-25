@@ -6,7 +6,10 @@ import {
   detectHeaderRowIndex,
   rowsToRecords,
   normalizeRows,
+  normalizeMealsAndInsulin,
   splitNewAndDuplicates,
+  splitNewMeals,
+  splitNewInsulin,
   type ColumnMapping,
   type GlucoseUnitCode,
 } from "../../../../src/domain/GenericCSVImporter";
@@ -24,6 +27,8 @@ export async function POST(request: Request) {
     fileName?: string;
     deviceManufacturer?: string;
     deviceModel?: string;
+    rapidInsulinRegimenId?: string;
+    longActingInsulinRegimenId?: string;
   };
   try {
     body = await request.json();
@@ -79,10 +84,84 @@ export async function POST(request: Request) {
     duplicateCount = split.duplicates.length;
   }
 
+  // ---- Comidas e insulina (mismo archivo, columnas separadas) ----
+  const { meals: parsedMeals, insulin: parsedInsulin } = normalizeMealsAndInsulin(records, body.mapping);
+  const rapidDoses = parsedInsulin.filter((i) => i.kind === "RAPID");
+  const longDoses = parsedInsulin.filter((i) => i.kind === "LONG");
+
+  // Si el archivo trae dosis de insulina, el paciente TIENE que decir a
+  // cuál de sus regímenes ya configurados corresponden — nunca se inventa
+  // un régimen nuevo ni se adivina.
+  if (rapidDoses.length > 0 && !body.rapidInsulinRegimenId) {
+    return NextResponse.json(
+      { error: "Este archivo trae dosis de insulina rápida — indica a cuál de tus insulinas corresponde." },
+      { status: 400 },
+    );
+  }
+  if (longDoses.length > 0 && !body.longActingInsulinRegimenId) {
+    return NextResponse.json(
+      { error: "Este archivo trae dosis de insulina prolongada — indica a cuál de tus insulinas corresponde." },
+      { status: 400 },
+    );
+  }
+  const regimenIdsToVerify = [body.rapidInsulinRegimenId, body.longActingInsulinRegimenId].filter(
+    (id): id is string => Boolean(id),
+  );
+  if (regimenIdsToVerify.length > 0) {
+    const ownedCount = await prisma.insulinRegimen.count({
+      where: { id: { in: regimenIdsToVerify }, userId: session.userId },
+    });
+    if (ownedCount !== regimenIdsToVerify.length) {
+      return NextResponse.json({ error: "Régimen de insulina no válido." }, { status: 400 });
+    }
+  }
+
+  let newMeals = parsedMeals;
+  let duplicateMealCount = 0;
+  if (parsedMeals.length > 0) {
+    const mealTimestamps = parsedMeals.map((m) => m.timestamp.getTime());
+    const existingMeals = await prisma.meal.findMany({
+      where: {
+        userId: session.userId,
+        timestamp: { gte: new Date(Math.min(...mealTimestamps)), lte: new Date(Math.max(...mealTimestamps)) },
+      },
+      select: { timestamp: true, carbsGDirect: true },
+    });
+    const split = splitNewMeals(
+      parsedMeals,
+      existingMeals
+        .filter((m) => m.carbsGDirect != null)
+        .map((m) => ({ timestamp: m.timestamp, carbsG: m.carbsGDirect as number })),
+    );
+    newMeals = split.newRows;
+    duplicateMealCount = split.duplicates.length;
+  }
+
+  const insulinWithRegimen = parsedInsulin.map((i) => ({
+    ...i,
+    insulinRegimenId: (i.kind === "RAPID" ? body.rapidInsulinRegimenId : body.longActingInsulinRegimenId) as string,
+  }));
+  let newInsulin = insulinWithRegimen;
+  let duplicateInsulinCount = 0;
+  if (insulinWithRegimen.length > 0) {
+    const insulinTimestamps = insulinWithRegimen.map((i) => i.timestamp.getTime());
+    const existingInsulin = await prisma.insulinEvent.findMany({
+      where: {
+        userId: session.userId,
+        insulinRegimenId: { in: regimenIdsToVerify },
+        timestamp: { gte: new Date(Math.min(...insulinTimestamps)), lte: new Date(Math.max(...insulinTimestamps)) },
+      },
+      select: { timestamp: true, dose: true, insulinRegimenId: true },
+    });
+    const split = splitNewInsulin(insulinWithRegimen, existingInsulin);
+    newInsulin = split.newRows;
+    duplicateInsulinCount = split.duplicates.length;
+  }
+
   const status =
-    newRows.length === 0
+    newRows.length === 0 && newMeals.length === 0 && newInsulin.length === 0
       ? "FAILED"
-      : errors.length > 0 || duplicateCount > 0
+      : errors.length > 0 || duplicateCount > 0 || duplicateMealCount > 0 || duplicateInsulinCount > 0
         ? "PARTIAL"
         : "COMPLETED";
 
@@ -97,8 +176,10 @@ export async function POST(request: Request) {
       dateRangeEnd,
       totalRows: records.length,
       importedRows: newRows.length,
-      duplicateRows: duplicateCount,
+      duplicateRows: duplicateCount + duplicateMealCount + duplicateInsulinCount,
       errorRows: errors.length,
+      importedMeals: newMeals.length,
+      importedInsulinEvents: newInsulin.length,
       status: status as never,
       errorDetails: errors.length > 0 ? (errors as any) : undefined,
     },
@@ -125,6 +206,38 @@ export async function POST(request: Request) {
     });
   }
 
+  if (newMeals.length > 0) {
+    // mealType siempre "OTHER" — el archivo solo trae gramos, nunca
+    // especifica si fue desayuno/almuerzo/cena; no lo inventamos.
+    await prisma.meal.createMany({
+      data: newMeals.map((m) => ({
+        userId: session.userId,
+        timestamp: m.timestamp,
+        mealType: "OTHER" as never,
+        carbsGDirect: m.carbsG,
+        origin: "IMPORT",
+        importBatchId: batch.id,
+      })),
+    });
+  }
+
+  if (newInsulin.length > 0) {
+    await prisma.insulinEvent.createMany({
+      data: newInsulin.map((i) => ({
+        userId: session.userId,
+        insulinRegimenId: i.insulinRegimenId,
+        timestamp: i.timestamp,
+        dose: i.dose,
+        // Rápida importada se asume de comida (el uso más común); larga
+        // siempre es basal. Es una simplificación razonable — el archivo
+        // no distingue "corrección" de "comida" para la rápida.
+        purpose: (i.kind === "RAPID" ? "MEAL" : "BASAL") as never,
+        origin: "IMPORT",
+        importBatchId: batch.id,
+      })),
+    });
+  }
+
   return NextResponse.json({
     batchId: batch.id,
     status: batch.status,
@@ -133,5 +246,9 @@ export async function POST(request: Request) {
     duplicateRows: duplicateCount,
     errorRows: errors.length,
     errors: errors.slice(0, 100),
+    importedMeals: newMeals.length,
+    duplicateMeals: duplicateMealCount,
+    importedInsulinEvents: newInsulin.length,
+    duplicateInsulinEvents: duplicateInsulinCount,
   });
 }

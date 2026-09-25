@@ -1,4 +1,5 @@
 import { getSession } from "./session";
+import { prisma } from "./prisma";
 
 /**
  * Para usar en Server Components / route handlers ya protegidos por el
@@ -12,4 +13,19 @@ export async function requireSession() {
     throw new Error("No autenticado.");
   }
   return session;
+}
+
+/**
+ * Para el panel de administrador. `isAdmin` NO vive en el JWT de sesión
+ * (así que revocar el acceso de alguien es inmediato — no hay que esperar
+ * a que expire ni renovar una cookie ya emitida) — siempre se revisa
+ * fresco contra la base de datos en cada request.
+ */
+export async function requireAdmin() {
+  const session = await requireSession();
+  const user = await prisma.user.findUnique({ where: { id: session.userId } });
+  if (!user?.isAdmin) {
+    throw new Error("No autorizado.");
+  }
+  return { session, user };
 }

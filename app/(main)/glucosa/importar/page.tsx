@@ -39,6 +39,8 @@ export default async function ImportarGlucosaPage() {
           importedRows: b.importedRows,
           duplicateRows: b.duplicateRows,
           errorRows: b.errorRows,
+          importedMeals: b.importedMeals,
+          importedInsulinEvents: b.importedInsulinEvents,
           status: b.status,
         }))}
       />

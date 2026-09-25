@@ -27,7 +27,7 @@ export default async function MainLayout({
           <LogoutButton />
         </div>
       </header>
-      <NavLinks />
+      <NavLinks isAdmin={user?.isAdmin ?? false} />
       <main className="app-content">{children}</main>
     </div>
   );

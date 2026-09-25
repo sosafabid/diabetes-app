@@ -8,6 +8,13 @@ interface RowError {
   reasonEs: string;
 }
 
+interface InsulinRegimenOption {
+  id: string;
+  insulinName: string;
+  insulinType: string;
+  usage: string;
+}
+
 interface AnalyzeResult {
   headers: string[];
   detectedMapping: {
@@ -16,6 +23,9 @@ interface AnalyzeResult {
     timeColumn?: string;
     glucoseColumn?: string;
     unitColumn?: string;
+    carbsColumn?: string;
+    rapidInsulinColumn?: string;
+    longActingInsulinColumn?: string;
   };
   confidence: "auto" | "partial" | "none";
   totalRows: number;
@@ -28,6 +38,10 @@ interface AnalyzeResult {
   sample: { timestamp: string; glucoseValue: number; unit: string }[];
   errors: RowError[];
   errorsTruncated: boolean;
+  mealCount: number;
+  rapidInsulinCount: number;
+  longActingInsulinCount: number;
+  insulinRegimens: InsulinRegimenOption[];
 }
 
 export default function ImportarGlucosaFlow() {
@@ -41,6 +55,11 @@ export default function ImportarGlucosaFlow() {
   const [timeColumn, setTimeColumn] = useState("");
   const [glucoseColumn, setGlucoseColumn] = useState("");
   const [unitColumn, setUnitColumn] = useState("");
+  const [carbsColumn, setCarbsColumn] = useState("");
+  const [rapidInsulinColumn, setRapidInsulinColumn] = useState("");
+  const [longActingInsulinColumn, setLongActingInsulinColumn] = useState("");
+  const [rapidInsulinRegimenId, setRapidInsulinRegimenId] = useState("");
+  const [longActingInsulinRegimenId, setLongActingInsulinRegimenId] = useState("");
   const [defaultUnit, setDefaultUnit] = useState<"MGDL" | "MMOLL">("MGDL");
   const [sourceType, setSourceType] = useState<"BLOOD" | "CGM" | "">("");
   const [deviceManufacturer, setDeviceManufacturer] = useState("");
@@ -55,12 +74,24 @@ export default function ImportarGlucosaFlow() {
     importedRows: number;
     duplicateRows: number;
     errorRows: number;
+    importedMeals: number;
+    duplicateMeals: number;
+    importedInsulinEvents: number;
+    duplicateInsulinEvents: number;
   } | null>(null);
 
   function currentMapping() {
-    return timeColumn
-      ? { dateColumn: datetimeColumn, timeColumn, glucoseColumn, unitColumn: unitColumn || undefined }
-      : { datetimeColumn, glucoseColumn, unitColumn: unitColumn || undefined };
+    const base = timeColumn
+      ? { dateColumn: datetimeColumn, timeColumn }
+      : { datetimeColumn };
+    return {
+      ...base,
+      glucoseColumn,
+      unitColumn: unitColumn || undefined,
+      carbsColumn: carbsColumn || undefined,
+      rapidInsulinColumn: rapidInsulinColumn || undefined,
+      longActingInsulinColumn: longActingInsulinColumn || undefined,
+    };
   }
 
   async function runAnalyze(text: string, mapping?: ReturnType<typeof currentMapping>) {
@@ -85,6 +116,9 @@ export default function ImportarGlucosaFlow() {
         setTimeColumn(data.detectedMapping.timeColumn ?? "");
         setGlucoseColumn(data.detectedMapping.glucoseColumn ?? "");
         setUnitColumn(data.detectedMapping.unitColumn ?? "");
+        setCarbsColumn(data.detectedMapping.carbsColumn ?? "");
+        setRapidInsulinColumn(data.detectedMapping.rapidInsulinColumn ?? "");
+        setLongActingInsulinColumn(data.detectedMapping.longActingInsulinColumn ?? "");
       }
     } catch {
       setError("Ocurrió un error de conexión. Intenta de nuevo.");
@@ -124,6 +158,8 @@ export default function ImportarGlucosaFlow() {
           fileName: file.name,
           deviceManufacturer: deviceManufacturer || undefined,
           deviceModel: deviceModel || undefined,
+          rapidInsulinRegimenId: rapidInsulinRegimenId || undefined,
+          longActingInsulinRegimenId: longActingInsulinRegimenId || undefined,
         }),
       });
       const data = await res.json();
@@ -146,6 +182,8 @@ export default function ImportarGlucosaFlow() {
     setAnalysis(null);
     setResult(null);
     setSourceType("");
+    setRapidInsulinRegimenId("");
+    setLongActingInsulinRegimenId("");
     setError(null);
   }
 
@@ -156,8 +194,17 @@ export default function ImportarGlucosaFlow() {
           {result.status === "FAILED" ? "No se importó nada" : "Importación completada"}
         </p>
         <ul className="card-details">
-          <li>{result.importedRows} lecturas nuevas importadas</li>
-          <li>{result.duplicateRows} duplicados omitidos (ya existían)</li>
+          <li>{result.importedRows} lecturas de glucosa nuevas</li>
+          {(result.importedMeals > 0 || result.duplicateMeals > 0) && (
+            <li>{result.importedMeals} comidas nuevas ({result.duplicateMeals} duplicadas omitidas)</li>
+          )}
+          {(result.importedInsulinEvents > 0 || result.duplicateInsulinEvents > 0) && (
+            <li>
+              {result.importedInsulinEvents} dosis de insulina nuevas ({result.duplicateInsulinEvents}{" "}
+              duplicadas omitidas)
+            </li>
+          )}
+          <li>{result.duplicateRows} lecturas de glucosa duplicadas omitidas</li>
           <li>{result.errorRows} filas con error, omitidas</li>
         </ul>
         <button type="button" onClick={reset}>
@@ -166,6 +213,11 @@ export default function ImportarGlucosaFlow() {
       </div>
     );
   }
+
+  const needsRapidRegimen = analysis && rapidInsulinColumn && analysis.rapidInsulinCount > 0;
+  const needsLongRegimen = analysis && longActingInsulinColumn && analysis.longActingInsulinCount > 0;
+  const missingRapidRegimen = needsRapidRegimen && !rapidInsulinRegimenId;
+  const missingLongRegimen = needsLongRegimen && !longActingInsulinRegimenId;
 
   return (
     <div className="card-form">
@@ -255,6 +307,120 @@ export default function ImportarGlucosaFlow() {
             </select>
           </label>
 
+          <p style={{ margin: "1rem 0 0", fontWeight: 600 }}>
+            Opcional: este archivo también trae comidas e insulina
+          </p>
+          <p className="form-hint" style={{ margin: 0 }}>
+            Si tu CSV incluye estas columnas (como los exports de FreeStyle Libre), las podemos
+            importar en el mismo paso — o déjalas en "No aplica" si solo quieres la glucosa.
+          </p>
+
+          <label>
+            Columna de carbohidratos (gramos)
+            <select
+              value={carbsColumn}
+              onChange={(e) => {
+                setCarbsColumn(e.target.value);
+                handleMappingChange();
+              }}
+            >
+              <option value="">No aplica</option>
+              {analysis.headers.map((h) => (
+                <option key={h} value={h}>
+                  {h}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Columna de insulina de acción rápida (unidades)
+            <select
+              value={rapidInsulinColumn}
+              onChange={(e) => {
+                setRapidInsulinColumn(e.target.value);
+                handleMappingChange();
+              }}
+            >
+              <option value="">No aplica</option>
+              {analysis.headers.map((h) => (
+                <option key={h} value={h}>
+                  {h}
+                </option>
+              ))}
+            </select>
+          </label>
+          {needsRapidRegimen && (
+            <label>
+              ¿Cuál de tus insulinas es esta insulina rápida?
+              {analysis.insulinRegimens.length === 0 ? (
+                <p className="form-error" style={{ margin: "0.3rem 0 0" }}>
+                  No tienes ninguna insulina configurada en{" "}
+                  <a href="/tratamiento" target="_blank" rel="noopener noreferrer">
+                    Mi tratamiento
+                  </a>{" "}
+                  todavía — créala ahí primero.
+                </p>
+              ) : (
+                <select
+                  value={rapidInsulinRegimenId}
+                  onChange={(e) => setRapidInsulinRegimenId(e.target.value)}
+                >
+                  <option value="">Selecciona una</option>
+                  {analysis.insulinRegimens.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.insulinName} ({r.insulinType})
+                    </option>
+                  ))}
+                </select>
+              )}
+            </label>
+          )}
+
+          <label>
+            Columna de insulina de acción prolongada/basal (unidades)
+            <select
+              value={longActingInsulinColumn}
+              onChange={(e) => {
+                setLongActingInsulinColumn(e.target.value);
+                handleMappingChange();
+              }}
+            >
+              <option value="">No aplica</option>
+              {analysis.headers.map((h) => (
+                <option key={h} value={h}>
+                  {h}
+                </option>
+              ))}
+            </select>
+          </label>
+          {needsLongRegimen && (
+            <label>
+              ¿Cuál de tus insulinas es esta insulina prolongada?
+              {analysis.insulinRegimens.length === 0 ? (
+                <p className="form-error" style={{ margin: "0.3rem 0 0" }}>
+                  No tienes ninguna insulina configurada en{" "}
+                  <a href="/tratamiento" target="_blank" rel="noopener noreferrer">
+                    Mi tratamiento
+                  </a>{" "}
+                  todavía — créala ahí primero.
+                </p>
+              ) : (
+                <select
+                  value={longActingInsulinRegimenId}
+                  onChange={(e) => setLongActingInsulinRegimenId(e.target.value)}
+                >
+                  <option value="">Selecciona una</option>
+                  {analysis.insulinRegimens.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.insulinName} ({r.insulinType})
+                    </option>
+                  ))}
+                </select>
+              )}
+            </label>
+          )}
+
           <fieldset className="source-toggle">
             <legend>Unidad por defecto (si el archivo no trae unidad por fila)</legend>
             <label className={`source-option ${defaultUnit === "MGDL" ? "selected" : ""}`}>
@@ -282,7 +448,7 @@ export default function ImportarGlucosaFlow() {
           </fieldset>
 
           <fieldset className="source-toggle">
-            <legend>Fuente de TODO este archivo (obligatorio — nunca se adivina)</legend>
+            <legend>Fuente de la glucosa en TODO este archivo (obligatorio — nunca se adivina)</legend>
             <label className={`source-option ${sourceType === "BLOOD" ? "selected" : ""}`}>
               <input
                 type="radio"
@@ -319,10 +485,14 @@ export default function ImportarGlucosaFlow() {
           <p style={{ margin: "1rem 0 0", fontWeight: 600 }}>3. Vista previa</p>
           <ul className="card-details">
             <li>{analysis.totalRows} filas en el archivo</li>
-            <li>{analysis.validRowCount} filas válidas</li>
-            <li>{analysis.errorRowCount} filas con error (se omiten, no se reparan)</li>
-            <li>{analysis.newCount} lecturas nuevas se importarían</li>
-            <li>{analysis.duplicateCount} duplicados se omitirían (ya existen o se repiten en el archivo)</li>
+            <li>{analysis.newCount} lecturas de glucosa nuevas se importarían</li>
+            <li>{analysis.duplicateCount} duplicados de glucosa se omitirían</li>
+            <li>{analysis.errorRowCount} filas de glucosa con error (se omiten, no se reparan)</li>
+            {carbsColumn && <li>{analysis.mealCount} comidas detectadas</li>}
+            {rapidInsulinColumn && <li>{analysis.rapidInsulinCount} dosis de insulina rápida detectadas</li>}
+            {longActingInsulinColumn && (
+              <li>{analysis.longActingInsulinCount} dosis de insulina prolongada detectadas</li>
+            )}
             {analysis.dateRangeStart && analysis.dateRangeEnd && (
               <li>
                 Rango: {new Date(analysis.dateRangeStart).toLocaleDateString("es-CR")} –{" "}
@@ -371,9 +541,17 @@ export default function ImportarGlucosaFlow() {
           <button
             type="button"
             onClick={handleConfirm}
-            disabled={!sourceType || !glucoseColumn || !datetimeColumn || confirming || analysis.newCount === 0}
+            disabled={
+              !sourceType ||
+              !glucoseColumn ||
+              !datetimeColumn ||
+              confirming ||
+              missingRapidRegimen ||
+              missingLongRegimen ||
+              (analysis.newCount === 0 && analysis.mealCount === 0 && analysis.rapidInsulinCount === 0 && analysis.longActingInsulinCount === 0)
+            }
           >
-            {confirming ? "Importando..." : `Importar ${analysis.newCount} lecturas`}
+            {confirming ? "Importando..." : "Importar"}
           </button>
         </>
       )}

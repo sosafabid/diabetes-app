@@ -15,6 +15,8 @@ interface Batch {
   importedRows: number;
   duplicateRows: number;
   errorRows: number;
+  importedMeals: number;
+  importedInsulinEvents: number;
   status: string;
 }
 
@@ -75,8 +77,11 @@ export default function HistorialImportaciones({ initialBatches }: { initialBatc
                 </p>
               )}
               <p style={{ margin: "0.25rem 0", fontSize: "0.85rem" }}>
-                {b.importedRows} registros · {b.duplicateRows} duplicados omitidos ·{" "}
-                {b.errorRows} errores omitidos · {STATUS_LABELS[b.status] ?? b.status}
+                {b.importedRows} lecturas de glucosa
+                {b.importedMeals > 0 && ` · ${b.importedMeals} comidas`}
+                {b.importedInsulinEvents > 0 && ` · ${b.importedInsulinEvents} dosis de insulina`} ·{" "}
+                {b.duplicateRows} duplicados omitidos · {b.errorRows} errores omitidos ·{" "}
+                {STATUS_LABELS[b.status] ?? b.status}
               </p>
             </div>
             {confirmingId === b.id ? (

@@ -13,13 +13,24 @@ export async function DELETE(request: Request, { params }: { params: { id: strin
   }
 
   const deleted = await prisma.$transaction(async (tx) => {
-    // Solo las lecturas de ESTE lote — nunca lo manual, nunca otro lote.
-    const { count } = await tx.glucoseReading.deleteMany({
+    // Solo lo de ESTE lote — nunca lo manual, nunca otro lote. Insulina
+    // primero (por su FK opcional hacia Meal).
+    const insulinResult = await tx.insulinEvent.deleteMany({
+      where: { importBatchId: batch.id, userId: session.userId },
+    });
+    const mealsResult = await tx.meal.deleteMany({
+      where: { importBatchId: batch.id, userId: session.userId },
+    });
+    const glucoseResult = await tx.glucoseReading.deleteMany({
       where: { importBatchId: batch.id, userId: session.userId },
     });
     await tx.importBatch.delete({ where: { id: batch.id } });
-    return count;
+    return {
+      readings: glucoseResult.count,
+      meals: mealsResult.count,
+      insulinEvents: insulinResult.count,
+    };
   });
 
-  return NextResponse.json({ ok: true, deletedReadings: deleted });
+  return NextResponse.json({ ok: true, deleted });
 }

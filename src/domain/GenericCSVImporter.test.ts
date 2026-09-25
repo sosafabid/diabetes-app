@@ -5,6 +5,9 @@ import {
   splitNewAndDuplicates,
   detectHeaderRowIndex,
   rowsToRecords,
+  normalizeMealsAndInsulin,
+  splitNewMeals,
+  splitNewInsulin,
 } from "./GenericCSVImporter";
 
 describe("detectColumns", () => {
@@ -257,5 +260,114 @@ describe("detectHeaderRowIndex / rowsToRecords — CSV real de FreeStyle Libre",
     const withInsulinColumn = [...headers, "Insulina de acción rápida (unidades)"];
     const detected = detectColumns(withInsulinColumn);
     expect(detected.mapping.unitColumn).toBeUndefined();
+  });
+});
+
+describe("normalizeMealsAndInsulin", () => {
+  const mapping = {
+    datetimeColumn: "Timestamp",
+    carbsColumn: "Carbohidratos (gramos)",
+    rapidInsulinColumn: "Insulina rápida (unidades)",
+    longActingInsulinColumn: "Insulina larga (unidades)",
+  };
+
+  it("extrae comidas e insulina de filas independientes (una fila = un tipo de evento)", () => {
+    const result = normalizeMealsAndInsulin(
+      [
+        { Timestamp: "2026-09-01T08:00:00", "Carbohidratos (gramos)": "40", "Insulina rápida (unidades)": "", "Insulina larga (unidades)": "" },
+        { Timestamp: "2026-09-01T08:05:00", "Carbohidratos (gramos)": "", "Insulina rápida (unidades)": "5", "Insulina larga (unidades)": "" },
+        { Timestamp: "2026-09-01T22:00:00", "Carbohidratos (gramos)": "", "Insulina rápida (unidades)": "", "Insulina larga (unidades)": "12" },
+      ],
+      mapping,
+    );
+    expect(result.meals).toHaveLength(1);
+    expect(result.meals[0].carbsG).toBe(40);
+    expect(result.insulin).toHaveLength(2);
+    expect(result.insulin[0]).toMatchObject({ dose: 5, kind: "RAPID" });
+    expect(result.insulin[1]).toMatchObject({ dose: 12, kind: "LONG" });
+  });
+
+  it("una fila con glucosa, carbohidratos e insulina a la vez aporta las tres cosas", () => {
+    const result = normalizeMealsAndInsulin(
+      [
+        {
+          Timestamp: "2026-09-01T08:00:00",
+          "Carbohidratos (gramos)": "40",
+          "Insulina rápida (unidades)": "5",
+          "Insulina larga (unidades)": "",
+        },
+      ],
+      mapping,
+    );
+    expect(result.meals).toHaveLength(1);
+    expect(result.insulin).toHaveLength(1);
+  });
+
+  it("no genera nada si la fecha no es válida (no es un 'error', simplemente no aporta datos)", () => {
+    const result = normalizeMealsAndInsulin(
+      [{ Timestamp: "fecha inválida", "Carbohidratos (gramos)": "40" }],
+      mapping,
+    );
+    expect(result.meals).toHaveLength(0);
+  });
+
+  it("reconoce las columnas reales de comidas e insulina de un CSV de FreeStyle Libre", () => {
+    const libreRawRows2 = [
+      ["Datos de glucosa", "Generado el", "22-09-2026 03:04 UTC", "Generado por", "Maria Amaya"],
+      [
+        "Dispositivo",
+        "Número de serie",
+        "Sello de tiempo del dispositivo",
+        "Tipo de registro",
+        "Historial de glucosa mg/dL",
+        "Escaneo de glucosa mg/dL",
+        "Insulina de acción rápida no numérica",
+        "Insulina de acción rápida (unidades)",
+        "Alimento no numérico",
+        "Carbohidratos (gramos)",
+        "Carbohidratos (porciones)",
+        "Insulina de acción larga no numérica",
+        "Insulina de acción larga (unidades)",
+      ],
+      ["FreeStyle Libre", "JCGA295-T1730", "13-07-2021 12:00", "2", "", "", "", "6.0", "", "", "", "", ""],
+      ["FreeStyle Libre", "JCGA295-T1730", "13-07-2021 12:05", "1", "", "", "", "", "", "45", "3", "", ""],
+      ["FreeStyle Libre", "JCGA295-T1730", "13-07-2021 22:00", "3", "", "", "", "", "", "", "", "", "20.0"],
+    ];
+    const { headers, records } = rowsToRecords(libreRawRows2, 1);
+    const detected = detectColumns(headers);
+    expect(detected.mapping.carbsColumn).toBe("Carbohidratos (gramos)");
+    expect(detected.mapping.rapidInsulinColumn).toBe("Insulina de acción rápida (unidades)");
+    expect(detected.mapping.longActingInsulinColumn).toBe("Insulina de acción larga (unidades)");
+
+    const result = normalizeMealsAndInsulin(records, detected.mapping);
+    expect(result.meals).toHaveLength(1);
+    expect(result.meals[0].carbsG).toBe(45);
+    expect(result.insulin).toHaveLength(2);
+    expect(result.insulin.find((e) => e.kind === "RAPID")?.dose).toBe(6);
+    expect(result.insulin.find((e) => e.kind === "LONG")?.dose).toBe(20);
+  });
+});
+
+describe("splitNewMeals / splitNewInsulin", () => {
+  it("splitNewMeals separa duplicados por timestamp+gramos", () => {
+    const parsed = [
+      { rowIndex: 2, timestamp: new Date("2026-09-01T08:00:00"), carbsG: 40 },
+      { rowIndex: 3, timestamp: new Date("2026-09-01T13:00:00"), carbsG: 30 },
+    ];
+    const existing = [{ timestamp: new Date("2026-09-01T08:00:00"), carbsG: 40 }];
+    const { newRows, duplicates } = splitNewMeals(parsed, existing);
+    expect(newRows).toHaveLength(1);
+    expect(duplicates).toHaveLength(1);
+  });
+
+  it("splitNewInsulin separa duplicados por timestamp+dosis+régimen", () => {
+    const parsed = [
+      { rowIndex: 2, timestamp: new Date("2026-09-01T08:00:00"), dose: 5, kind: "RAPID" as const, insulinRegimenId: "reg-1" },
+      { rowIndex: 3, timestamp: new Date("2026-09-01T22:00:00"), dose: 20, kind: "LONG" as const, insulinRegimenId: "reg-2" },
+    ];
+    const existing = [{ timestamp: new Date("2026-09-01T08:00:00"), dose: 5, insulinRegimenId: "reg-1" }];
+    const { newRows, duplicates } = splitNewInsulin(parsed, existing);
+    expect(newRows).toHaveLength(1);
+    expect(duplicates).toHaveLength(1);
   });
 });

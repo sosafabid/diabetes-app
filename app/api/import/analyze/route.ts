@@ -7,6 +7,7 @@ import {
   detectHeaderRowIndex,
   rowsToRecords,
   normalizeRows,
+  normalizeMealsAndInsulin,
   splitNewAndDuplicates,
   type ColumnMapping,
   type GlucoseUnitCode,
@@ -97,6 +98,13 @@ export async function POST(request: Request) {
     duplicateCount = duplicates.length;
   }
 
+  const { meals, insulin } = normalizeMealsAndInsulin(records, mapping);
+
+  const insulinRegimens = await prisma.insulinRegimen.findMany({
+    where: { userId: session.userId, isActive: true },
+    select: { id: true, insulinName: true, insulinType: true, usage: true },
+  });
+
   return NextResponse.json({
     headers,
     detectedMapping: detected.mapping,
@@ -117,5 +125,9 @@ export async function POST(request: Request) {
     })),
     errors: errors.slice(0, MAX_ERROR_ROWS_RETURNED),
     errorsTruncated: errors.length > MAX_ERROR_ROWS_RETURNED,
+    mealCount: meals.length,
+    rapidInsulinCount: insulin.filter((i) => i.kind === "RAPID").length,
+    longActingInsulinCount: insulin.filter((i) => i.kind === "LONG").length,
+    insulinRegimens,
   });
 }

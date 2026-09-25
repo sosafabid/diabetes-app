@@ -43,6 +43,7 @@ model User {
   timezone          String   @default("America/Costa_Rica")
   notificationPrefs Json?    // preferencias de notificación
   consentAcceptedAt DateTime? // aceptación del aviso de privacidad/consentimiento al registrarse
+  isAdmin           Boolean  @default(false)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -60,6 +61,7 @@ model User {
   auditLogs         AuditLog[]
   hypoglycemiaPlans  HypoglycemiaPlan[]
   hypoglycemiaEvents HypoglycemiaEvent[]
+  glucoseEvents      GlucoseEvent[]
   passwordResetTokens PasswordResetToken[]
   importBatches       ImportBatch[]
 }
@@ -109,6 +111,8 @@ model ImportBatch {
   importedRows       Int
   duplicateRows      Int
   errorRows          Int
+  importedMeals         Int @default(0)
+  importedInsulinEvents Int @default(0)
 
   status             ImportBatchStatus @default(PENDING)
   // [{ row: number, reason: string }] — nunca se "repara" una fila sola,
@@ -116,6 +120,8 @@ model ImportBatch {
   errorDetails       Json?
 
   readings           GlucoseReading[]
+  meals              Meal[]
+  insulinEvents      InsulinEvent[]
 
   @@index([userId, importedAt])
 }
@@ -248,6 +254,9 @@ model GlucoseReading {
   triggeredHypoglycemiaEvent HypoglycemiaEvent? @relation("TriggeringReading")
   resolvedHypoglycemiaEvent  HypoglycemiaEvent? @relation("ResolvedReading")
 
+  initialForGlucoseEvent     GlucoseEvent?      @relation("EventInitialReading")
+  eventMeasurement           EventMeasurement?  @relation("EventFollowUpReading")
+
   @@index([userId, timestamp])
   @@index([importBatchId])
 }
@@ -326,6 +335,11 @@ model Meal {
   notes           String?
   createdAt       DateTime @default(now())
 
+  // Trazabilidad de importación — igual que en GlucoseReading.
+  origin          ReadingOrigin @default(MANUAL)
+  importBatchId   String?
+  importBatch     ImportBatch?  @relation(fields: [importBatchId], references: [id])
+
   items           MealItem[]   // Método B: construida a partir de alimentos
   insulinEvents   InsulinEvent[]
 
@@ -399,6 +413,13 @@ model InsulinEvent {
 
   notes            String?
   createdAt        DateTime @default(now())
+
+  eventIntervention EventIntervention?
+
+  // Trazabilidad de importación — igual que en GlucoseReading.
+  origin           ReadingOrigin @default(MANUAL)
+  importBatchId    String?
+  importBatch      ImportBatch?  @relation(fields: [importBatchId], references: [id])
 
   @@index([userId, timestamp])
 }
@@ -566,6 +587,13 @@ model FollowUp {
   alertId     String?
   alert       Alert?   @relation(fields: [alertId], references: [id])
 
+  // Trazabilidad directa hacia el evento unificado (opcional — un FollowUp
+  // manual/antiguo puede no tener ninguno). El texto de este FollowUp
+  // SIEMPRE debe ser "registra una nueva medición", nunca una recomendación
+  // de tratamiento o dosis.
+  glucoseEventId String?
+  glucoseEvent   GlucoseEvent? @relation(fields: [glucoseEventId], references: [id])
+
   dueAt       DateTime
   completedAt DateTime?
   description String
@@ -607,8 +635,109 @@ model HypoglycemiaPlan {
   createdAt             DateTime @default(now())
 
   hypoglycemiaEvents    HypoglycemiaEvent[]
+  glucoseEvents         GlucoseEvent[]
 
   @@index([userId, effectiveFrom])
+}
+
+// ----------------------------------------------------------------------------
+// EVENTOS DE GLUCOSA (unificado — sustituye HypoglycemiaEvent hacia adelante)
+// ----------------------------------------------------------------------------
+// Una secuencia completa: lectura inicial → 0+ intervenciones → 0+
+// mediciones de seguimiento → cierre. Nunca copia valores de glucosa ni de
+// insulina — todo apunta a los registros reales (GlucoseReading,
+// InsulinEvent) que ya existen.
+//
+// FASE 1 (esta migración): tabla creada, HypoglycemiaEvent SIGUE siendo la
+// única fuente activa — nada en /api/glucosa escribe aquí todavía. El corte
+// hacia adelante es un paso aparte, después de validar la migración de
+// datos históricos.
+model GlucoseEvent {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  type   GlucoseEventType
+  status GlucoseEventStatus @default(OPEN)
+
+  initialGlucoseReadingId String         @unique
+  initialGlucoseReading   GlucoseReading @relation("EventInitialReading", fields: [initialGlucoseReadingId], references: [id])
+
+  // Solo aplica a type=LOW — mismo plan ya versionado que usa hoy
+  // HypoglycemiaEvent, sin cambios.
+  hypoglycemiaPlanId String?
+  hypoglycemiaPlan   HypoglycemiaPlan? @relation(fields: [hypoglycemiaPlanId], references: [id])
+
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  notes     String?
+
+  // Se llena SOLO cuando este evento viene del script de migración de
+  // datos — permite verificar conteos y hace el script seguro de correr
+  // más de una vez sin crear duplicados.
+  migratedFromHypoglycemiaEventId String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  measurements  EventMeasurement[]
+  interventions EventIntervention[]
+  followUps     FollowUp[]
+
+  @@index([userId, startedAt])
+}
+
+enum GlucoseEventType {
+  LOW
+  HIGH
+}
+
+enum GlucoseEventStatus {
+  OPEN
+  CLOSED
+}
+
+// Medición de SEGUIMIENTO dentro de un evento (la lectura inicial NO va
+// aquí — vive en GlucoseEvent.initialGlucoseReadingId). Nunca copia el
+// valor: apunta al GlucoseReading real, ya guardado por el flujo normal.
+model EventMeasurement {
+  id               String       @id @default(uuid())
+  glucoseEventId   String
+  glucoseEvent     GlucoseEvent @relation(fields: [glucoseEventId], references: [id])
+  glucoseReadingId String       @unique
+  glucoseReading   GlucoseReading @relation("EventFollowUpReading", fields: [glucoseReadingId], references: [id])
+  createdAt        DateTime     @default(now())
+
+  @@index([glucoseEventId])
+}
+
+// Lo que el paciente reporta haber hecho — NUNCA una dosis calculada por
+// la app. Tipo CARBOHYDRATE: texto libre, sin catálogo obligatorio. Tipo
+// INSULIN: apunta a un InsulinEvent ya creado por el flujo normal de
+// /insulina — nunca se duplica ni se crea aquí.
+model EventIntervention {
+  id             String       @id @default(uuid())
+  glucoseEventId String
+  glucoseEvent   GlucoseEvent @relation(fields: [glucoseEventId], references: [id])
+
+  type EventInterventionType
+
+  food              String?
+  carbohydrateGrams Float?
+
+  insulinEventId String?      @unique
+  insulinEvent   InsulinEvent? @relation(fields: [insulinEventId], references: [id])
+
+  timestamp DateTime
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@index([glucoseEventId])
+}
+
+enum EventInterventionType {
+  CARBOHYDRATE
+  INSULIN
 }
 
 // Una hipoglucemia detectada: vincula la lectura que la disparó, el plan

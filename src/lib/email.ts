@@ -15,7 +15,7 @@
 //                       en el dashboard de Resend (agregar unos registros
 //                       DNS) y usar una dirección de ese dominio aquí.
 //   APP_URL          — URL pública de la app (para construir el link del
-//                       correo), ej. "https://diabetes-app-livid.vercel.app"
+//                       correo), ej. "https://diabetes-app-content-manager2.vercel.app"
 // ============================================================================
 
 export async function sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {

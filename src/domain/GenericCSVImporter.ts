@@ -34,6 +34,14 @@ export interface ColumnMapping {
   glucoseColumnFallback?: string;
   /** Columna que indica la unidad por fila, si el archivo la trae. */
   unitColumn?: string;
+  /** Columna opcional de carbohidratos (gramos) — si el archivo trae
+   * también comidas en el mismo CSV (patrón común de exportadores de
+   * CGM tipo FreeStyle Libre). */
+  carbsColumn?: string;
+  /** Columna opcional de insulina de acción rápida (unidades). */
+  rapidInsulinColumn?: string;
+  /** Columna opcional de insulina de acción prolongada/basal (unidades). */
+  longActingInsulinColumn?: string;
 }
 
 export interface DetectedColumns {
@@ -106,6 +114,28 @@ const GLUCOSE_FALLBACK_HINTS = [
   "scan glucose",
 ];
 const UNIT_HINTS = ["unit", "unidad"];
+const CARBS_HINTS = [
+  "carbohidratos (gramos)",
+  "carbohidratos",
+  "carbs (g)",
+  "carb grams",
+  "carbs",
+];
+const RAPID_INSULIN_HINTS = [
+  "insulina de acción rápida (unidades)",
+  "insulina de acción rápida",
+  "rapid-acting insulin (units)",
+  "rapid-acting insulin",
+  "insulina rápida",
+];
+const LONG_INSULIN_HINTS = [
+  "insulina de acción larga (unidades)",
+  "insulina de acción larga",
+  "long-acting insulin (units)",
+  "long-acting insulin",
+  "insulina prolongada",
+  "insulina basal",
+];
 
 function normalizeHeader(h: string): string {
   return h.trim().toLowerCase();
@@ -139,6 +169,9 @@ export function detectColumns(headers: string[]): DetectedColumns {
   const timeColumn = datetimeColumn ? undefined : findColumn(headers, normalized, TIME_HINTS);
   const glucoseColumn = findColumn(headers, normalized, GLUCOSE_HINTS);
   const unitColumn = findColumn(headers, normalized, UNIT_HINTS, false);
+  const carbsColumn = findColumn(headers, normalized, CARBS_HINTS);
+  const rapidInsulinColumn = findColumn(headers, normalized, RAPID_INSULIN_HINTS);
+  const longActingInsulinColumn = findColumn(headers, normalized, LONG_INSULIN_HINTS);
 
   let glucoseColumnFallback: string | undefined;
   if (glucoseColumn) {
@@ -154,6 +187,9 @@ export function detectColumns(headers: string[]): DetectedColumns {
     glucoseColumn,
     glucoseColumnFallback,
     unitColumn,
+    carbsColumn,
+    rapidInsulinColumn,
+    longActingInsulinColumn,
   };
   const hasTimestamp = Boolean(datetimeColumn || dateColumn);
   const confidence: DetectedColumns["confidence"] =
@@ -275,6 +311,106 @@ export function normalizeRows(
  * usando timestamp+valor+unidad como llave. `existing` viene de una
  * consulta a Prisma hecha en la API route — esta función en sí no toca
  * la base de datos, por eso es testable sin mock de DB. */
+export interface ParsedMealRow {
+  rowIndex: number;
+  timestamp: Date;
+  carbsG: number;
+}
+
+export interface ParsedInsulinRow {
+  rowIndex: number;
+  timestamp: Date;
+  dose: number;
+  kind: "RAPID" | "LONG";
+}
+
+/** Extrae comidas y dosis de insulina de las MISMAS filas del CSV (una fila
+ * puede traer glucosa, carbohidratos e insulina a la vez, o solo una cosa
+ * — patrón típico de exportadores como FreeStyle Libre). Nunca inventa
+ * nada: si no hay fecha válida o el número no es válido, esa fila
+ * simplemente no aporta ese dato, sin generar un "error" — a diferencia de
+ * la glucosa, carbohidratos/insulina son opcionales en el archivo. */
+export function normalizeMealsAndInsulin(
+  rows: Record<string, string>[],
+  mapping: ColumnMapping,
+): { meals: ParsedMealRow[]; insulin: ParsedInsulinRow[] } {
+  const meals: ParsedMealRow[] = [];
+  const insulin: ParsedInsulinRow[] = [];
+
+  rows.forEach((row, i) => {
+    const rowIndex = i + 2;
+
+    let timestamp: Date | null = null;
+    if (mapping.datetimeColumn) {
+      timestamp = tryParseDate(row[mapping.datetimeColumn] ?? "");
+    } else if (mapping.dateColumn) {
+      const datePart = tryParseDate(row[mapping.dateColumn] ?? "");
+      if (datePart) {
+        timestamp = mapping.timeColumn
+          ? tryParseTimeOnto(datePart, row[mapping.timeColumn] ?? "")
+          : datePart;
+      }
+    }
+    if (!timestamp) return;
+
+    if (mapping.carbsColumn) {
+      const carbsG = tryParseGlucose(row[mapping.carbsColumn] ?? "");
+      if (carbsG != null) meals.push({ rowIndex, timestamp, carbsG });
+    }
+    if (mapping.rapidInsulinColumn) {
+      const dose = tryParseGlucose(row[mapping.rapidInsulinColumn] ?? "");
+      if (dose != null) insulin.push({ rowIndex, timestamp, dose, kind: "RAPID" });
+    }
+    if (mapping.longActingInsulinColumn) {
+      const dose = tryParseGlucose(row[mapping.longActingInsulinColumn] ?? "");
+      if (dose != null) insulin.push({ rowIndex, timestamp, dose, kind: "LONG" });
+    }
+  });
+
+  return { meals, insulin };
+}
+
+export interface ExistingMealKey {
+  timestamp: Date;
+  carbsG: number;
+}
+
+export function splitNewMeals(
+  parsed: ParsedMealRow[],
+  existing: ExistingMealKey[],
+): { newRows: ParsedMealRow[]; duplicates: ParsedMealRow[] } {
+  const existingKeys = new Set(existing.map((e) => `${e.timestamp.getTime()}_${e.carbsG}`));
+  const newRows: ParsedMealRow[] = [];
+  const duplicates: ParsedMealRow[] = [];
+  for (const m of parsed) {
+    const key = `${m.timestamp.getTime()}_${m.carbsG}`;
+    (existingKeys.has(key) ? duplicates : newRows).push(m);
+  }
+  return { newRows, duplicates };
+}
+
+export interface ExistingInsulinKey {
+  timestamp: Date;
+  dose: number;
+  insulinRegimenId: string;
+}
+
+export function splitNewInsulin(
+  parsed: (ParsedInsulinRow & { insulinRegimenId: string })[],
+  existing: ExistingInsulinKey[],
+): { newRows: (ParsedInsulinRow & { insulinRegimenId: string })[]; duplicates: (ParsedInsulinRow & { insulinRegimenId: string })[] } {
+  const existingKeys = new Set(
+    existing.map((e) => `${e.timestamp.getTime()}_${e.dose}_${e.insulinRegimenId}`),
+  );
+  const newRows: (ParsedInsulinRow & { insulinRegimenId: string })[] = [];
+  const duplicates: (ParsedInsulinRow & { insulinRegimenId: string })[] = [];
+  for (const e of parsed) {
+    const key = `${e.timestamp.getTime()}_${e.dose}_${e.insulinRegimenId}`;
+    (existingKeys.has(key) ? duplicates : newRows).push(e);
+  }
+  return { newRows, duplicates };
+}
+
 export function splitNewAndDuplicates(
   parsedRows: ParsedGlucoseRow[],
   existing: ExistingReadingKey[],
