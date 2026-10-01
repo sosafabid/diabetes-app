@@ -163,6 +163,8 @@ model InsulinRegimen {
   insulinName String              // p.ej. "Glargina", "Lispro"
   insulinType InsulinType
   usage       InsulinUsage
+  brandOrActiveIngredient String?
+  concentration           String? // p.ej. "U-100"
   isActive    Boolean  @default(true)
 
   createdAt   DateTime @default(now())
@@ -177,6 +179,7 @@ enum InsulinType {
   SHORT
   INTERMEDIATE
   LONG
+  PREMIXED
   OTHER
 }
 
@@ -184,6 +187,7 @@ enum InsulinUsage {
   MEALS
   CORRECTION
   BASAL
+  PREMIXED
   OTHER
 }
 
@@ -205,12 +209,22 @@ model RegimenVersion {
   // Parámetros de comida/corrección — SIEMPRE introducidos por el paciente
   // según indicación de su profesional de salud. Nunca calculados/inventados
   // por el sistema.
-  carbRatio              Float?   // relación insulina/carbohidratos (g por U)
+  carbRatio              Float?   // relación insulina/carbohidratos (g por U) — Modalidad A
   correctionFactor       Float?   // cuánto baja 1 U la glucosa
   targetGlucoseLow        Float?
   targetGlucoseHigh       Float?
 
-  notes                  String?
+  // Modalidad de la pauta — puramente informativo/organizativo, NUNCA
+  // habilita un cálculo. Null = todavía no se ha clasificado.
+  modality               DosingModality?
+
+  // Procedencia de la pauta — nunca se presenta como verificada médicamente
+  // a menos que este campo lo diga explícitamente.
+  source                 RegimenVersionSource @default(DECLARED)
+  professionalName       String?
+
+  notes                  String?  // notas del paciente
+  professionalNotes      String?  // notas del profesional de salud
 
   effectiveFrom          DateTime @default(now())
   effectiveTo             DateTime? // null = versión vigente
@@ -220,7 +234,45 @@ model RegimenVersion {
 
   createdAt               DateTime @default(now())
 
+  tiers                  DosingTier[] // Modalidad B — esquema progresivo por tramos
+
   @@index([insulinRegimenId, effectiveFrom])
+}
+
+enum DosingModality {
+  CARB_RATIO   // A — relación insulina/carbohidratos
+  TIERED       // B — esquema progresivo por tramos
+  FIXED_DOSE   // C — dosis fija por comida/horario
+  MANUAL_ONLY  // D — solo registro manual, sin pauta de cálculo
+}
+
+enum RegimenVersionSource {
+  DECLARED                    // el paciente la introdujo tal cual
+  CONFIRMED_BY_PROFESSIONAL   // un profesional de salud la revisó/confirmó
+  PENDING_REVIEW              // introducida, pendiente de que un profesional la confirme
+  INACTIVE                    // sustituida o ya no vigente
+}
+
+// Modalidad B — tabla de tramos de carbohidratos. Se guarda tal cual la
+// pauta la indica; NUNCA se usa aquí ni en ningún otro lado para calcular
+// una dosis automáticamente.
+model DosingTier {
+  id               String   @id @default(uuid())
+  regimenVersionId String
+  regimenVersion   RegimenVersion @relation(fields: [regimenVersionId], references: [id])
+
+  order            Int      // orden del tramo (1, 2, 3...)
+  carbsFromG       Float
+  carbsToG         Float?   // null = sin límite superior (el tramo más alto)
+  units            Float
+  // false = "dosis indicada para el intervalo total de carbohidratos"
+  // true  = "dosis acumulativa por cada tramo adicional"
+  isCumulative     Boolean  @default(false)
+  description      String?
+
+  createdAt        DateTime @default(now())
+
+  @@index([regimenVersionId, order])
 }
 
 // ----------------------------------------------------------------------------
@@ -327,6 +379,12 @@ model Meal {
   // Método A: carbohidratos introducidos directamente
   carbsGDirect    Float?
 
+  // Método D (nuevo): rango rápido — NUNCA se convierte a un número exacto.
+  // Si carbsSource = RANGE, carbsGDirect se deja en null a propósito; el
+  // resumen reporta aparte cuántas comidas quedaron solo como rango.
+  carbsRange      CarbsRange?
+  carbsSource     MealCarbsSource @default(MANUAL_EXACT)
+
   // Método C: estimación por foto — SIEMPRE debe confirmarse/editarse
   photoUrl              String?
   aiEstimatedCarbsG     Float?
@@ -344,6 +402,23 @@ model Meal {
   insulinEvents   InsulinEvent[]
 
   @@index([userId, timestamp])
+}
+
+enum CarbsRange {
+  ZERO       // 0 g
+  R1_15      // 1-15 g
+  R16_30     // 16-30 g
+  R31_45     // 31-45 g
+  R46_60     // 46-60 g
+  R61_90     // 61-90 g
+  OVER_90    // más de 90 g
+}
+
+enum MealCarbsSource {
+  MANUAL_EXACT // gramos exactos introducidos a mano (comportamiento de siempre)
+  RANGE        // rango rápido seleccionado — carbsGDirect queda null
+  FOOD_ITEMS   // suma de MealItem (Método B)
+  AI           // estimación por foto, ya confirmada por el paciente (aiEstimationConfirmed=true)
 }
 
 enum MealType {
@@ -668,9 +743,13 @@ model GlucoseEvent {
   hypoglycemiaPlanId String?
   hypoglycemiaPlan   HypoglycemiaPlan? @relation(fields: [hypoglycemiaPlanId], references: [id])
 
-  startedAt DateTime  @default(now())
-  endedAt   DateTime?
-  notes     String?
+  // Contexto opcional al iniciar el evento — nunca obligatorio.
+  symptoms  String?
+
+  startedAt  DateTime  @default(now())
+  resolvedAt DateTime? // el paciente marcó "se resolvió" — el evento puede seguir abierto para revisar
+  endedAt    DateTime? // cierre definitivo del evento
+  notes      String?
 
   // Se llena SOLO cuando este evento viene del script de migración de
   // datos — permite verificar conteos y hace el script seguro de correr
@@ -693,8 +772,10 @@ enum GlucoseEventType {
 }
 
 enum GlucoseEventStatus {
-  OPEN
-  CLOSED
+  OPEN          // en curso
+  RESOLVED      // el paciente marcó que se resolvió, pero el registro sigue abierto para revisión
+  CLOSED        // cerrado definitivamente
+  NEEDS_REVIEW  // marcado para que el paciente/profesional lo revise después
 }
 
 // Medición de SEGUIMIENTO dentro de un evento (la lectura inicial NO va
